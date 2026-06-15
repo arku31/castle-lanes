@@ -1,0 +1,39 @@
+[package]
+name = "castle_lanes"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "=0.18.1", default-features = false, features = [
+    "bevy_asset",
+    "bevy_core_pipeline",
+    "bevy_render",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_winit",
+    "default_font",
+    "multi_threaded",
+    "png",
+    "std",
+    "wayland",
+    "x11",
+] }
+lightyear = { version = "=0.26.4", default-features = false, features = ["client", "server", "replication", "interpolation", "udp", "std"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
+
+[[bin]]
+name = "castle_lanes_client"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "castle_lanes_server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "castle_lanes_bot"
+path = "src/bin/bot.rs"

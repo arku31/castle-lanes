@@ -1,0 +1,61 @@
+version: "3"
+
+vars:
+  SERVER_ADDR: 127.0.0.1:4000
+  PLAYER_NAME: Alice
+  BOT_NAME: Bryn
+  CLIENT_RACE: grove
+  BOT_RACE: ember
+
+tasks:
+  build-client:
+    desc: Build the native Bevy client.
+    cmds:
+      - cargo build --bin castle_lanes_client
+
+  build-server:
+    desc: Build the dedicated authoritative server.
+    cmds:
+      - cargo build --bin castle_lanes_server
+
+  build:
+    desc: Build all binaries.
+    cmds:
+      - cargo build --bins
+
+  run-server:
+    desc: Run the dedicated server on SERVER_ADDR.
+    cmds:
+      - cargo run --bin castle_lanes_server -- {{.SERVER_ADDR}}
+
+  run-client:
+    desc: Run a desktop client connected to SERVER_ADDR.
+    cmds:
+      - cargo run --bin castle_lanes_client -- --name {{.PLAYER_NAME}} --server {{.SERVER_ADDR}}
+
+  run-demo-client:
+    desc: Run a visible auto-ready demo client.
+    cmds:
+      - cargo run --bin castle_lanes_client -- --name {{.PLAYER_NAME}} --server {{.SERVER_ADDR}} --race {{.CLIENT_RACE}} --auto-ready --auto-build-demo
+
+  run-bot:
+    desc: Run the scripted headless peer.
+    cmds:
+      - cargo run --bin castle_lanes_bot -- --name {{.BOT_NAME}} --server {{.SERVER_ADDR}} --race {{.BOT_RACE}}
+
+  check:
+    desc: Format and check all binaries.
+    cmds:
+      - cargo fmt
+      - cargo check --bins
+
+  test:
+    desc: Run unit and integration tests serially.
+    cmds:
+      - cargo test -- --test-threads=1 -q
+
+  verify:
+    desc: Run the full local verification pass.
+    cmds:
+      - task: check
+      - task: test
