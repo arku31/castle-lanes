@@ -6,12 +6,15 @@ use std::path::Path;
 pub const CASTLE_HEALTH: i32 = 1000;
 pub const STARTING_GOLD: i32 = 150;
 pub const BASE_INCOME: i32 = 10;
-pub const INCOME_INTERVAL: f32 = 5.0;
-pub const GRID_W: i32 = 4;
-pub const GRID_H: i32 = 3;
+pub const INCOME_INTERVAL: f32 = 10.0;
+pub const INTEREST_RATE: f32 = 0.04;
+pub const GRID_W: i32 = 10;
+pub const GRID_H: i32 = 5;
 pub const LANE_LENGTH: f32 = 100.0;
 pub const SUDDEN_DEATH_START: f32 = 180.0;
 pub const DEFAULT_BALANCE_PATH: &str = "config/balance.json";
+const BOUNTY_EVENT_TTL: f32 = 0.75;
+const CASTLE_JUNCTION_RANGE: f32 = 18.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u8);
@@ -66,6 +69,26 @@ pub enum MatchPhase {
     GameOver,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Lane {
+    Top,
+    Bottom,
+}
+
+impl Lane {
+    pub const ALL: [Lane; 2] = [Lane::Top, Lane::Bottom];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BuildZone {
+    Front,
+    Back,
+}
+
+impl BuildZone {
+    pub const ALL: [BuildZone; 2] = [BuildZone::Front, BuildZone::Back];
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RaceKind {
     Vanguard,
@@ -90,12 +113,27 @@ pub enum BuildingKind {
     VanguardBarracks,
     VanguardRangeTower,
     VanguardForge,
+    VanguardPikeYard,
+    VanguardBulwarkHall,
+    VanguardChapel,
+    VanguardStables,
+    VanguardSiegeWorkshop,
     GroveRootDen,
     GroveThornSpire,
     GroveBloomWell,
+    GroveMossNursery,
+    GroveBarkBastion,
+    GroveMirePool,
+    GroveVineWarren,
+    GroveAncientSeed,
     EmberCinderPit,
     EmberFlameSpire,
     EmberAshMine,
+    EmberSparkKennel,
+    EmberObsidianGate,
+    EmberBlazeStable,
+    EmberSmokeAltar,
+    EmberInfernoEngine,
 }
 
 impl BuildingKind {
@@ -103,13 +141,28 @@ impl BuildingKind {
         match self {
             BuildingKind::VanguardBarracks
             | BuildingKind::VanguardRangeTower
-            | BuildingKind::VanguardForge => RaceKind::Vanguard,
+            | BuildingKind::VanguardForge
+            | BuildingKind::VanguardPikeYard
+            | BuildingKind::VanguardBulwarkHall
+            | BuildingKind::VanguardChapel
+            | BuildingKind::VanguardStables
+            | BuildingKind::VanguardSiegeWorkshop => RaceKind::Vanguard,
             BuildingKind::GroveRootDen
             | BuildingKind::GroveThornSpire
-            | BuildingKind::GroveBloomWell => RaceKind::Grove,
+            | BuildingKind::GroveBloomWell
+            | BuildingKind::GroveMossNursery
+            | BuildingKind::GroveBarkBastion
+            | BuildingKind::GroveMirePool
+            | BuildingKind::GroveVineWarren
+            | BuildingKind::GroveAncientSeed => RaceKind::Grove,
             BuildingKind::EmberCinderPit
             | BuildingKind::EmberFlameSpire
-            | BuildingKind::EmberAshMine => RaceKind::Ember,
+            | BuildingKind::EmberAshMine
+            | BuildingKind::EmberSparkKennel
+            | BuildingKind::EmberObsidianGate
+            | BuildingKind::EmberBlazeStable
+            | BuildingKind::EmberSmokeAltar
+            | BuildingKind::EmberInfernoEngine => RaceKind::Ember,
         }
     }
 
@@ -118,12 +171,27 @@ impl BuildingKind {
             BuildingKind::VanguardBarracks => "Barracks",
             BuildingKind::VanguardRangeTower => "Range Tower",
             BuildingKind::VanguardForge => "Forge",
+            BuildingKind::VanguardPikeYard => "Pike Yard",
+            BuildingKind::VanguardBulwarkHall => "Bulwark Hall",
+            BuildingKind::VanguardChapel => "Chapel",
+            BuildingKind::VanguardStables => "Stables",
+            BuildingKind::VanguardSiegeWorkshop => "Siege Workshop",
             BuildingKind::GroveRootDen => "Root Den",
             BuildingKind::GroveThornSpire => "Thorn Spire",
             BuildingKind::GroveBloomWell => "Bloom Well",
+            BuildingKind::GroveMossNursery => "Moss Nursery",
+            BuildingKind::GroveBarkBastion => "Bark Bastion",
+            BuildingKind::GroveMirePool => "Mire Pool",
+            BuildingKind::GroveVineWarren => "Vine Warren",
+            BuildingKind::GroveAncientSeed => "Ancient Seed",
             BuildingKind::EmberCinderPit => "Cinder Pit",
             BuildingKind::EmberFlameSpire => "Flame Spire",
             BuildingKind::EmberAshMine => "Ash Mine",
+            BuildingKind::EmberSparkKennel => "Spark Kennel",
+            BuildingKind::EmberObsidianGate => "Obsidian Gate",
+            BuildingKind::EmberBlazeStable => "Blaze Stable",
+            BuildingKind::EmberSmokeAltar => "Smoke Altar",
+            BuildingKind::EmberInfernoEngine => "Inferno Engine",
         }
     }
 
@@ -134,12 +202,37 @@ impl BuildingKind {
                 Some(BuildingKind::VanguardRangeTower)
             }
             "forge" | "f" => Some(BuildingKind::VanguardForge),
+            "pike" | "pike-yard" | "pikeyard" | "v4" => Some(BuildingKind::VanguardPikeYard),
+            "bulwark" | "bulwark-hall" | "bulwarkhall" | "v5" => {
+                Some(BuildingKind::VanguardBulwarkHall)
+            }
+            "chapel" | "v6" => Some(BuildingKind::VanguardChapel),
+            "stables" | "stable" | "v7" => Some(BuildingKind::VanguardStables),
+            "siege" | "siege-workshop" | "siegeworkshop" | "v8" => {
+                Some(BuildingKind::VanguardSiegeWorkshop)
+            }
             "root" | "root-den" | "rootden" | "g1" => Some(BuildingKind::GroveRootDen),
             "thorn" | "thorn-spire" | "thornspire" | "g2" => Some(BuildingKind::GroveThornSpire),
             "bloom" | "bloom-well" | "bloomwell" | "g3" => Some(BuildingKind::GroveBloomWell),
+            "moss" | "moss-nursery" | "mossnursery" | "g4" => Some(BuildingKind::GroveMossNursery),
+            "bark" | "bark-bastion" | "barkbastion" | "g5" => Some(BuildingKind::GroveBarkBastion),
+            "mire" | "mire-pool" | "mirepool" | "g6" => Some(BuildingKind::GroveMirePool),
+            "vine" | "vine-warren" | "vinewarren" | "g7" => Some(BuildingKind::GroveVineWarren),
+            "ancient" | "ancient-seed" | "ancientseed" | "g8" => {
+                Some(BuildingKind::GroveAncientSeed)
+            }
             "cinder" | "cinder-pit" | "cinderpit" | "e1" => Some(BuildingKind::EmberCinderPit),
             "flame" | "flame-spire" | "flamespire" | "e2" => Some(BuildingKind::EmberFlameSpire),
             "ash" | "ash-mine" | "ashmine" | "e3" => Some(BuildingKind::EmberAshMine),
+            "spark" | "spark-kennel" | "sparkkennel" | "e4" => Some(BuildingKind::EmberSparkKennel),
+            "obsidian" | "obsidian-gate" | "obsidiangate" | "e5" => {
+                Some(BuildingKind::EmberObsidianGate)
+            }
+            "blaze" | "blaze-stable" | "blazestable" | "e6" => Some(BuildingKind::EmberBlazeStable),
+            "smoke" | "smoke-altar" | "smokealtar" | "e7" => Some(BuildingKind::EmberSmokeAltar),
+            "inferno" | "inferno-engine" | "infernoengine" | "e8" => {
+                Some(BuildingKind::EmberInfernoEngine)
+            }
             _ => None,
         }
     }
@@ -149,10 +242,25 @@ impl BuildingKind {
 pub enum UnitKind {
     VanguardGuard,
     VanguardArcher,
+    VanguardPikeman,
+    VanguardShieldbearer,
+    VanguardBattleCleric,
+    VanguardLancer,
+    VanguardBallista,
     GroveBruiser,
     GroveNeedler,
+    GroveSproutling,
+    GroveBarkguard,
+    GroveMireShaman,
+    GroveVineStalker,
+    GroveTreantColossus,
     EmberRunner,
     EmberCaster,
+    EmberSparkImp,
+    EmberObsidianGuard,
+    EmberFireLancer,
+    EmberSmokeWitch,
+    EmberCinderEngine,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -285,6 +393,49 @@ pub fn damage_range(midpoint: i32, variance: f32) -> (i32, i32) {
     ((midpoint - spread).max(1), midpoint + spread)
 }
 
+pub fn interest_gold(gold: i32, interest_rate: f32) -> i32 {
+    ((gold.max(0) as f32) * interest_rate.max(0.0)).floor() as i32
+}
+
+pub fn building_lane_pos(team: Team, zone: BuildZone, cell: GridCell) -> f32 {
+    let cell_x = cell.x.clamp(0, GRID_W - 1) as f32;
+    match (team, zone) {
+        (Team::Left, BuildZone::Front) => 8.0 + cell_x * 1.7,
+        (Team::Left, BuildZone::Back) => -8.0 - cell_x * 1.7,
+        (Team::Right, BuildZone::Front) => LANE_LENGTH - 8.0 - cell_x * 1.7,
+        (Team::Right, BuildZone::Back) => LANE_LENGTH + 8.0 + cell_x * 1.7,
+    }
+}
+
+pub fn building_spawn_pos(team: Team, zone: BuildZone, cell: GridCell) -> f32 {
+    building_lane_pos(team, zone, cell) + team.direction() * 2.0
+}
+
+pub fn castle_junction(pos: f32) -> Option<Team> {
+    if (pos - Team::Left.castle_pos()).abs() <= CASTLE_JUNCTION_RANGE {
+        Some(Team::Left)
+    } else if (pos - Team::Right.castle_pos()).abs() <= CASTLE_JUNCTION_RANGE {
+        Some(Team::Right)
+    } else {
+        None
+    }
+}
+
+pub fn unit_lanes_connected(
+    attacker_lane: Lane,
+    attacker_pos: f32,
+    target_lane: Lane,
+    target_pos: f32,
+) -> bool {
+    if attacker_lane == target_lane {
+        return true;
+    }
+    matches!(
+        (castle_junction(attacker_pos), castle_junction(target_pos)),
+        (Some(a), Some(b)) if a == b
+    )
+}
+
 fn roll_base_damage(rng_state: &mut u64, midpoint: i32, variance: f32) -> i32 {
     let (min_damage, max_damage) = damage_range(midpoint, variance);
     if max_damage <= min_damage {
@@ -304,9 +455,27 @@ fn next_random_u32(state: &mut u64) -> u32 {
 impl UnitKind {
     pub fn race_like(self) -> RaceKind {
         match self {
-            UnitKind::VanguardGuard | UnitKind::VanguardArcher => RaceKind::Vanguard,
-            UnitKind::GroveBruiser | UnitKind::GroveNeedler => RaceKind::Grove,
-            UnitKind::EmberRunner | UnitKind::EmberCaster => RaceKind::Ember,
+            UnitKind::VanguardGuard
+            | UnitKind::VanguardArcher
+            | UnitKind::VanguardPikeman
+            | UnitKind::VanguardShieldbearer
+            | UnitKind::VanguardBattleCleric
+            | UnitKind::VanguardLancer
+            | UnitKind::VanguardBallista => RaceKind::Vanguard,
+            UnitKind::GroveBruiser
+            | UnitKind::GroveNeedler
+            | UnitKind::GroveSproutling
+            | UnitKind::GroveBarkguard
+            | UnitKind::GroveMireShaman
+            | UnitKind::GroveVineStalker
+            | UnitKind::GroveTreantColossus => RaceKind::Grove,
+            UnitKind::EmberRunner
+            | UnitKind::EmberCaster
+            | UnitKind::EmberSparkImp
+            | UnitKind::EmberObsidianGuard
+            | UnitKind::EmberFireLancer
+            | UnitKind::EmberSmokeWitch
+            | UnitKind::EmberCinderEngine => RaceKind::Ember,
         }
     }
 
@@ -314,10 +483,25 @@ impl UnitKind {
         match self {
             UnitKind::VanguardGuard => "Guard",
             UnitKind::VanguardArcher => "Archer",
+            UnitKind::VanguardPikeman => "Pikeman",
+            UnitKind::VanguardShieldbearer => "Shieldbearer",
+            UnitKind::VanguardBattleCleric => "Battle Cleric",
+            UnitKind::VanguardLancer => "Lancer",
+            UnitKind::VanguardBallista => "Ballista",
             UnitKind::GroveBruiser => "Bruiser",
             UnitKind::GroveNeedler => "Needler",
+            UnitKind::GroveSproutling => "Sproutling",
+            UnitKind::GroveBarkguard => "Barkguard",
+            UnitKind::GroveMireShaman => "Mire Shaman",
+            UnitKind::GroveVineStalker => "Vine Stalker",
+            UnitKind::GroveTreantColossus => "Treant Colossus",
             UnitKind::EmberRunner => "Runner",
             UnitKind::EmberCaster => "Caster",
+            UnitKind::EmberSparkImp => "Spark Imp",
+            UnitKind::EmberObsidianGuard => "Obsidian Guard",
+            UnitKind::EmberFireLancer => "Fire Lancer",
+            UnitKind::EmberSmokeWitch => "Smoke Witch",
+            UnitKind::EmberCinderEngine => "Cinder Engine",
         }
     }
 }
@@ -327,6 +511,8 @@ pub struct BalanceConfig {
     pub starting_gold: i32,
     pub base_income: i32,
     pub income_interval: f32,
+    #[serde(default = "default_interest_rate")]
+    pub interest_rate: f32,
     pub sudden_death_start: f32,
     pub races: Vec<RaceConfig>,
     pub buildings: Vec<BuildingConfig>,
@@ -386,7 +572,7 @@ pub struct RaceConfig {
     pub castle_health: i32,
     #[serde(default = "default_castle_armor")]
     pub castle_armor: ArmorType,
-    pub buildings: [BuildingKind; 3],
+    pub buildings: Vec<BuildingKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -395,6 +581,10 @@ pub struct BuildingConfig {
     pub name: String,
     pub label: String,
     pub cost: i32,
+    #[serde(default = "default_building_health")]
+    pub max_health: i32,
+    #[serde(default = "default_building_armor")]
+    pub armor_type: ArmorType,
     pub spawn_interval: Option<f32>,
     pub spawned_unit: Option<UnitKind>,
     pub income_bonus: i32,
@@ -410,6 +600,8 @@ pub struct UnitConfig {
     pub damage: i32,
     #[serde(default = "default_damage_variance")]
     pub damage_variance: f32,
+    #[serde(default = "default_bounty")]
+    pub bounty: i32,
     #[serde(default = "default_attack_type")]
     pub attack_type: AttackType,
     #[serde(default = "default_attack_mode")]
@@ -436,6 +628,22 @@ fn default_attack_mode() -> AttackMode {
 
 fn default_damage_variance() -> f32 {
     0.10
+}
+
+fn default_interest_rate() -> f32 {
+    INTEREST_RATE
+}
+
+fn default_bounty() -> i32 {
+    1
+}
+
+fn default_building_health() -> i32 {
+    250
+}
+
+fn default_building_armor() -> ArmorType {
+    ArmorType::Fortified
 }
 
 fn default_armor_type() -> ArmorType {
@@ -487,7 +695,11 @@ pub struct Building {
     pub id: u64,
     pub owner: Team,
     pub kind: BuildingKind,
+    pub lane: Lane,
+    pub zone: BuildZone,
     pub cell: GridCell,
+    pub health: i32,
+    pub max_health: i32,
     pub spawn_timer: f32,
 }
 
@@ -496,9 +708,21 @@ pub struct Unit {
     pub id: u64,
     pub owner: Team,
     pub kind: UnitKind,
+    pub lane: Lane,
     pub health: i32,
     pub lane_pos: f32,
     pub attack_timer: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BountyEvent {
+    pub id: u64,
+    pub team: Team,
+    pub amount: i32,
+    pub lane: Lane,
+    pub lane_pos: f32,
+    pub unit_kind: UnitKind,
+    pub age: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -507,12 +731,12 @@ pub struct MatchSnapshot {
     pub tick: u64,
     pub elapsed_secs: f32,
     pub sudden_death: bool,
-    pub balance: BalanceConfig,
     pub players: Vec<PlayerInfo>,
     pub economies: [Economy; 2],
     pub castles: [Castle; 2],
     pub buildings: Vec<Building>,
     pub units: Vec<Unit>,
+    pub bounty_events: Vec<BountyEvent>,
     pub winner: Option<Team>,
     pub message: String,
 }
@@ -526,6 +750,7 @@ pub struct GameSim {
     pub castles: [Castle; 2],
     pub buildings: Vec<Building>,
     pub units: Vec<Unit>,
+    pub bounty_events: Vec<BountyEvent>,
     pub winner: Option<Team>,
     pub message: String,
     pub balance: BalanceConfig,
@@ -571,6 +796,7 @@ impl GameSim {
             ],
             buildings: Vec::new(),
             units: Vec::new(),
+            bounty_events: Vec::new(),
             winner: None,
             message: "Waiting for two players.".to_string(),
             balance,
@@ -588,12 +814,12 @@ impl GameSim {
             tick: self.tick,
             elapsed_secs: self.elapsed_secs,
             sudden_death: self.sudden_death(),
-            balance: self.balance.clone(),
             players: self.players.clone(),
             economies: self.economies.clone(),
             castles: self.castles.clone(),
             buildings: self.buildings.clone(),
             units: self.units.clone(),
+            bounty_events: self.bounty_events.clone(),
             winner: self.winner,
             message: self.message.clone(),
         }
@@ -711,6 +937,8 @@ impl GameSim {
         &mut self,
         player_id: PlayerId,
         kind: BuildingKind,
+        lane: Lane,
+        zone: BuildZone,
         cell: GridCell,
     ) -> Result<(), String> {
         if self.phase != MatchPhase::Playing {
@@ -741,12 +969,13 @@ impl GameSim {
         if self
             .buildings
             .iter()
-            .any(|b| b.owner == team && b.cell == cell)
+            .any(|b| b.owner == team && b.lane == lane && b.zone == zone && b.cell == cell)
         {
             return Err("That cell is already occupied.".to_string());
         }
         let building_name = self.balance.building(kind).name.clone();
         let building_cost = self.balance.building(kind).cost;
+        let building_health = self.balance.building(kind).max_health;
         let income_bonus = self.balance.building(kind).income_bonus;
         let spawn_timer = self.balance.building(kind).spawn_interval.unwrap_or(0.0);
         let economy = &mut self.economies[team.slot()];
@@ -760,7 +989,11 @@ impl GameSim {
             id,
             owner: team,
             kind,
+            lane,
+            zone,
             cell,
+            health: building_health,
+            max_health: building_health,
             spawn_timer,
         });
         self.message = format!("{team:?} built {}.", building_name);
@@ -786,6 +1019,7 @@ impl GameSim {
             return;
         }
         self.elapsed_secs += dt;
+        self.tick_bounty_events(dt);
         self.tick_income(dt);
         self.tick_buildings(dt);
         self.tick_units(dt);
@@ -882,22 +1116,34 @@ impl GameSim {
     fn clear_match_entities(&mut self) {
         self.buildings.clear();
         self.units.clear();
+        self.bounty_events.clear();
+    }
+
+    fn tick_bounty_events(&mut self, dt: f32) {
+        for event in &mut self.bounty_events {
+            event.age += dt;
+        }
+        self.bounty_events
+            .retain(|event| event.age <= BOUNTY_EVENT_TTL);
     }
 
     fn tick_income(&mut self, dt: f32) {
         self.income_timer -= dt;
-        if self.income_timer > 0.0 {
-            return;
-        }
-        self.income_timer += self.balance.income_interval;
-        for economy in &mut self.economies {
-            economy.gold += economy.income;
+        while self.income_timer <= 0.0 {
+            self.income_timer += self.balance.income_interval;
+            for economy in &mut self.economies {
+                economy.gold +=
+                    economy.income + interest_gold(economy.gold, self.balance.interest_rate);
+            }
         }
     }
 
     fn tick_buildings(&mut self, dt: f32) {
         let mut spawns = Vec::new();
         for building in &mut self.buildings {
+            if building.health <= 0 {
+                continue;
+            }
             let building_config = self.balance.building(building.kind);
             let Some(interval) = building_config.spawn_interval else {
                 continue;
@@ -906,20 +1152,27 @@ impl GameSim {
             if building.spawn_timer <= 0.0 {
                 building.spawn_timer += interval;
                 if let Some(kind) = building_config.spawned_unit {
-                    spawns.push((building.owner, kind));
+                    spawns.push((
+                        building.owner,
+                        building.lane,
+                        building.zone,
+                        building.cell,
+                        kind,
+                    ));
                 }
             }
         }
 
-        for (owner, kind) in spawns {
+        for (owner, lane, zone, cell, kind) in spawns {
             let max_health = self.balance.unit(kind).max_health;
             let id = self.take_id();
             self.units.push(Unit {
                 id,
                 owner,
                 kind,
+                lane,
                 health: max_health,
-                lane_pos: owner.spawn_pos(),
+                lane_pos: building_spawn_pos(owner, zone, cell),
                 attack_timer: 0.25,
             });
         }
@@ -927,7 +1180,7 @@ impl GameSim {
 
     fn tick_units(&mut self, dt: f32) {
         let mut rng_state = self.rng_state;
-        let positions: HashMap<u64, (Team, f32, i32, ArmorType)> = self
+        let positions: HashMap<u64, (Team, Lane, f32, i32, ArmorType)> = self
             .units
             .iter()
             .map(|u| {
@@ -935,6 +1188,7 @@ impl GameSim {
                     u.id,
                     (
                         u.owner,
+                        u.lane,
                         u.lane_pos,
                         u.health,
                         self.balance.unit(u.kind).armor_type,
@@ -942,16 +1196,41 @@ impl GameSim {
                 )
             })
             .collect();
-        let mut unit_damage: HashMap<u64, i32> = HashMap::new();
+        let mut unit_damage: HashMap<u64, (i32, Team)> = HashMap::new();
+        let mut building_damage: HashMap<u64, i32> = HashMap::new();
         let mut castle_damage = [0, 0];
 
         for unit in &mut self.units {
             let unit_config = self.balance.unit(unit.kind);
             unit.attack_timer = (unit.attack_timer - dt).max(0.0);
-            let target = positions
+            let unit_target = positions
                 .iter()
-                .filter(|(_, (team, _, health, _))| *team != unit.owner && *health > 0)
-                .map(|(id, (_, pos, _, armor))| (*id, (unit.lane_pos - *pos).abs(), *armor))
+                .filter(|(_, (team, lane, pos, health, _))| {
+                    *team != unit.owner
+                        && *health > 0
+                        && unit_lanes_connected(unit.lane, unit.lane_pos, *lane, *pos)
+                })
+                .map(|(id, (_, _, pos, _, armor))| (*id, (unit.lane_pos - *pos).abs(), *armor))
+                .filter(|(_, distance, _)| *distance <= unit_config.attack_range)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+
+            let building_target = self
+                .buildings
+                .iter()
+                .filter(|building| {
+                    building.owner != unit.owner
+                        && building.lane == unit.lane
+                        && building.zone == BuildZone::Front
+                        && building.health > 0
+                })
+                .map(|building| {
+                    let pos = building_lane_pos(building.owner, building.zone, building.cell);
+                    (
+                        building.id,
+                        (unit.lane_pos - pos).abs(),
+                        self.balance.building(building.kind).armor_type,
+                    )
+                })
                 .filter(|(_, distance, _)| *distance <= unit_config.attack_range)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
 
@@ -959,14 +1238,27 @@ impl GameSim {
             let can_attack_castle = enemy_castle_distance <= unit_config.attack_range;
 
             if unit.attack_timer <= 0.0 {
-                if let Some((target_id, _, target_armor)) = target {
+                if let Some((target_id, _, target_armor)) = unit_target {
                     let rolled_damage = roll_base_damage(
                         &mut rng_state,
                         unit_config.damage,
                         unit_config.damage_variance,
                     );
                     let damage = typed_damage(rolled_damage, unit_config.attack_type, target_armor);
-                    *unit_damage.entry(target_id).or_insert(0) += damage;
+                    let entry = unit_damage.entry(target_id).or_insert((0, unit.owner));
+                    entry.0 += damage;
+                    entry.1 = unit.owner;
+                    unit.attack_timer = unit_config.attack_interval;
+                    continue;
+                }
+                if let Some((target_id, _, target_armor)) = building_target {
+                    let rolled_damage = roll_base_damage(
+                        &mut rng_state,
+                        unit_config.damage,
+                        unit_config.damage_variance,
+                    );
+                    let damage = typed_damage(rolled_damage, unit_config.attack_type, target_armor);
+                    *building_damage.entry(target_id).or_insert(0) += damage;
                     unit.attack_timer = unit_config.attack_interval;
                     continue;
                 }
@@ -987,19 +1279,65 @@ impl GameSim {
                 }
             }
 
-            if target.is_none() && !can_attack_castle {
+            if unit_target.is_none() && building_target.is_none() && !can_attack_castle {
                 unit.lane_pos += unit.owner.direction() * unit_config.speed * dt;
-                unit.lane_pos = unit.lane_pos.clamp(0.0, LANE_LENGTH);
+                unit.lane_pos = unit.lane_pos.clamp(-18.0, LANE_LENGTH + 18.0);
             }
         }
         self.rng_state = rng_state;
 
+        let mut bounty_awards = [0, 0];
+        let mut pending_bounty_events = Vec::new();
         for unit in &mut self.units {
-            if let Some(damage) = unit_damage.get(&unit.id) {
+            if let Some((damage, killer)) = unit_damage.get(&unit.id) {
                 unit.health -= *damage;
+                if unit.health <= 0 {
+                    let bounty = self.balance.unit(unit.kind).bounty.max(0);
+                    bounty_awards[killer.slot()] += bounty;
+                    if bounty > 0 {
+                        pending_bounty_events.push((
+                            *killer,
+                            bounty,
+                            unit.lane,
+                            unit.lane_pos,
+                            unit.kind,
+                        ));
+                    }
+                }
             }
         }
         self.units.retain(|u| u.health > 0);
+        let mut destroyed_income = [0, 0];
+        for building in &mut self.buildings {
+            if let Some(damage) = building_damage.get(&building.id) {
+                building.health -= *damage;
+                if building.health <= 0 {
+                    destroyed_income[building.owner.slot()] +=
+                        self.balance.building(building.kind).income_bonus;
+                }
+            }
+        }
+        self.buildings.retain(|building| building.health > 0);
+        for (idx, lost_income) in destroyed_income.into_iter().enumerate() {
+            if lost_income > 0 {
+                self.economies[idx].income -= lost_income;
+            }
+        }
+        for (idx, bounty) in bounty_awards.into_iter().enumerate() {
+            self.economies[idx].gold += bounty;
+        }
+        for (team, amount, lane, lane_pos, unit_kind) in pending_bounty_events {
+            let id = self.take_id();
+            self.bounty_events.push(BountyEvent {
+                id,
+                team,
+                amount,
+                lane,
+                lane_pos,
+                unit_kind,
+                age: 0.0,
+            });
+        }
         for (idx, damage) in castle_damage.into_iter().enumerate() {
             self.castles[idx].health = (self.castles[idx].health - damage).max(0);
         }
@@ -1117,6 +1455,15 @@ mod tests {
         sim
     }
 
+    fn place_test_building(
+        sim: &mut GameSim,
+        player: PlayerId,
+        kind: BuildingKind,
+        cell: GridCell,
+    ) -> Result<(), String> {
+        sim.place_building(player, kind, Lane::Top, BuildZone::Front, cell)
+    }
+
     #[test]
     fn starts_when_two_players_are_ready() {
         let sim = ready_two_players();
@@ -1164,7 +1511,8 @@ mod tests {
     fn validates_building_placement_and_spends_gold() {
         let mut sim = ready_two_players();
         let player = sim.players[0].id;
-        sim.place_building(
+        place_test_building(
+            &mut sim,
             player,
             BuildingKind::VanguardBarracks,
             GridCell { x: 0, y: 0 },
@@ -1175,7 +1523,8 @@ mod tests {
             sim.balance.starting_gold - sim.balance.building(BuildingKind::VanguardBarracks).cost
         );
         assert!(
-            sim.place_building(
+            place_test_building(
+                &mut sim,
                 player,
                 BuildingKind::VanguardBarracks,
                 GridCell { x: 0, y: 0 }
@@ -1183,7 +1532,8 @@ mod tests {
             .is_err()
         );
         assert!(
-            sim.place_building(
+            place_test_building(
+                &mut sim,
                 player,
                 BuildingKind::VanguardBarracks,
                 GridCell { x: GRID_W, y: 0 }
@@ -1198,7 +1548,13 @@ mod tests {
         let player = sim.players[0].id;
 
         let err = sim
-            .place_building(player, BuildingKind::GroveRootDen, GridCell { x: 0, y: 0 })
+            .place_building(
+                player,
+                BuildingKind::GroveRootDen,
+                Lane::Top,
+                BuildZone::Front,
+                GridCell { x: 0, y: 0 },
+            )
             .unwrap_err();
 
         assert!(err.contains("not available"));
@@ -1208,8 +1564,13 @@ mod tests {
     fn forge_increases_income_tick() {
         let mut sim = ready_two_players();
         let player = sim.players[0].id;
-        sim.place_building(player, BuildingKind::VanguardForge, GridCell { x: 1, y: 1 })
-            .unwrap();
+        place_test_building(
+            &mut sim,
+            player,
+            BuildingKind::VanguardForge,
+            GridCell { x: 1, y: 1 },
+        )
+        .unwrap();
         assert_eq!(
             sim.economies[0].income,
             sim.balance.base_income
@@ -1222,8 +1583,22 @@ mod tests {
         sim.tick(sim.balance.income_interval);
         assert_eq!(
             sim.economies[0].gold,
-            gold_after_buy + sim.economies[0].income
+            gold_after_buy
+                + sim.economies[0].income
+                + interest_gold(gold_after_buy, sim.balance.interest_rate)
         );
+    }
+
+    #[test]
+    fn income_tick_adds_floored_interest_from_unused_gold() {
+        let mut sim = ready_two_players();
+        sim.economies[0].gold = 101;
+        sim.economies[1].gold = 99;
+
+        sim.tick(sim.balance.income_interval);
+
+        assert_eq!(sim.economies[0].gold, 101 + sim.balance.base_income + 4);
+        assert_eq!(sim.economies[1].gold, 99 + sim.balance.base_income + 3);
     }
 
     #[test]
@@ -1233,12 +1608,188 @@ mod tests {
         sim.place_building(
             player,
             BuildingKind::VanguardBarracks,
+            Lane::Bottom,
+            BuildZone::Front,
             GridCell { x: 0, y: 0 },
         )
         .unwrap();
-        sim.tick(6.0);
+        sim.tick(
+            sim.balance
+                .building(BuildingKind::VanguardBarracks)
+                .spawn_interval
+                .unwrap(),
+        );
         assert_eq!(sim.units.len(), 1);
         assert_eq!(sim.units[0].kind, UnitKind::VanguardGuard);
+        assert_eq!(sim.units[0].lane, Lane::Bottom);
+    }
+
+    #[test]
+    fn units_prioritize_same_lane_units_over_buildings() {
+        let mut sim = ready_two_players();
+        let right = sim.players[1].id;
+        sim.place_building(
+            right,
+            BuildingKind::VanguardBarracks,
+            Lane::Top,
+            BuildZone::Front,
+            GridCell { x: 0, y: 0 },
+        )
+        .unwrap();
+        let building_health = sim.buildings[0].health;
+        sim.units.push(Unit {
+            id: 700,
+            owner: Team::Left,
+            kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
+            health: 999,
+            lane_pos: 50.0,
+            attack_timer: 0.0,
+        });
+        sim.units.push(Unit {
+            id: 701,
+            owner: Team::Right,
+            kind: UnitKind::EmberRunner,
+            lane: Lane::Top,
+            health: 50,
+            lane_pos: 51.0,
+            attack_timer: 99.0,
+        });
+
+        sim.tick(0.1);
+
+        assert!(
+            sim.units
+                .iter()
+                .any(|unit| unit.id == 701 && unit.health < 50)
+        );
+        assert_eq!(sim.buildings[0].health, building_health);
+    }
+
+    #[test]
+    fn different_lane_units_fight_inside_castle_junction() {
+        let mut sim = ready_two_players();
+        sim.units.push(Unit {
+            id: 720,
+            owner: Team::Left,
+            kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
+            health: 999,
+            lane_pos: 6.0,
+            attack_timer: 0.0,
+        });
+        sim.units.push(Unit {
+            id: 721,
+            owner: Team::Right,
+            kind: UnitKind::EmberRunner,
+            lane: Lane::Bottom,
+            health: 50,
+            lane_pos: 5.0,
+            attack_timer: 99.0,
+        });
+
+        sim.tick(0.1);
+
+        assert!(
+            sim.units
+                .iter()
+                .any(|unit| unit.id == 721 && unit.health < 50)
+        );
+    }
+
+    #[test]
+    fn different_lane_units_ignore_each_other_outside_castle_junction() {
+        let mut sim = ready_two_players();
+        sim.units.push(Unit {
+            id: 730,
+            owner: Team::Left,
+            kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
+            health: 999,
+            lane_pos: 50.0,
+            attack_timer: 0.0,
+        });
+        sim.units.push(Unit {
+            id: 731,
+            owner: Team::Right,
+            kind: UnitKind::EmberRunner,
+            lane: Lane::Bottom,
+            health: 50,
+            lane_pos: 51.0,
+            attack_timer: 99.0,
+        });
+
+        sim.tick(0.1);
+
+        assert!(
+            sim.units
+                .iter()
+                .any(|unit| unit.id == 731 && unit.health == 50)
+        );
+    }
+
+    #[test]
+    fn front_buildings_tank_before_castle_but_back_buildings_do_not() {
+        let mut sim = ready_two_players();
+        let right = sim.players[1].id;
+        sim.economies[Team::Right.slot()].gold = 500;
+        sim.place_building(
+            right,
+            BuildingKind::VanguardBarracks,
+            Lane::Top,
+            BuildZone::Front,
+            GridCell { x: 0, y: 0 },
+        )
+        .unwrap();
+        sim.place_building(
+            right,
+            BuildingKind::VanguardRangeTower,
+            Lane::Top,
+            BuildZone::Back,
+            GridCell { x: 0, y: 0 },
+        )
+        .unwrap();
+        let front_id = sim.buildings[0].id;
+        let back_id = sim.buildings[1].id;
+        let castle_health = sim.castles[Team::Right.slot()].health;
+        sim.units.push(Unit {
+            id: 710,
+            owner: Team::Left,
+            kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
+            health: 999,
+            lane_pos: building_lane_pos(Team::Right, BuildZone::Front, GridCell { x: 0, y: 0 }),
+            attack_timer: 0.0,
+        });
+
+        sim.tick(0.1);
+
+        let front = sim
+            .buildings
+            .iter()
+            .find(|building| building.id == front_id)
+            .unwrap();
+        let back = sim
+            .buildings
+            .iter()
+            .find(|building| building.id == back_id)
+            .unwrap();
+        assert!(front.health < front.max_health);
+        assert_eq!(back.health, back.max_health);
+        assert_eq!(sim.castles[Team::Right.slot()].health, castle_health);
+
+        sim.buildings.retain(|building| building.id != front_id);
+        sim.units[0].lane_pos = Team::Right.castle_pos() - 1.0;
+        sim.units[0].attack_timer = 0.0;
+        sim.tick(0.1);
+
+        let back = sim
+            .buildings
+            .iter()
+            .find(|building| building.id == back_id)
+            .unwrap();
+        assert_eq!(back.health, back.max_health);
+        assert!(sim.castles[Team::Right.slot()].health < castle_health);
     }
 
     #[test]
@@ -1250,6 +1801,7 @@ mod tests {
             id: 500,
             owner: Team::Left,
             kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
             health: 999,
             lane_pos: Team::Right.castle_pos() - 1.0,
             attack_timer: 0.0,
@@ -1260,6 +1812,66 @@ mod tests {
         sim.tick(0.1);
         assert_eq!(sim.phase, MatchPhase::GameOver);
         assert_eq!(sim.winner, Some(Team::Left));
+    }
+
+    #[test]
+    fn killing_units_awards_configured_bounty() {
+        let mut sim = ready_two_players();
+        sim.economies[Team::Left.slot()].gold = 0;
+        sim.economies[Team::Right.slot()].gold = 0;
+        sim.units.push(Unit {
+            id: 500,
+            owner: Team::Left,
+            kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
+            health: 999,
+            lane_pos: 50.0,
+            attack_timer: 0.0,
+        });
+        sim.units.push(Unit {
+            id: 501,
+            owner: Team::Right,
+            kind: UnitKind::EmberRunner,
+            lane: Lane::Top,
+            health: 1,
+            lane_pos: 50.0,
+            attack_timer: 99.0,
+        });
+
+        sim.tick(0.1);
+
+        assert!(sim.units.iter().all(|unit| unit.id != 501));
+        assert_eq!(
+            sim.economies[Team::Left.slot()].gold,
+            sim.balance.unit(UnitKind::EmberRunner).bounty
+        );
+        assert_eq!(sim.economies[Team::Right.slot()].gold, 0);
+        assert_eq!(sim.bounty_events.len(), 1);
+        assert_eq!(sim.bounty_events[0].team, Team::Left);
+        assert_eq!(
+            sim.bounty_events[0].amount,
+            sim.balance.unit(UnitKind::EmberRunner).bounty
+        );
+    }
+
+    #[test]
+    fn bounty_events_linger_for_snapshots_then_expire() {
+        let mut sim = ready_two_players();
+        sim.bounty_events.push(BountyEvent {
+            id: 10,
+            team: Team::Left,
+            amount: 2,
+            lane: Lane::Top,
+            lane_pos: 50.0,
+            unit_kind: UnitKind::VanguardGuard,
+            age: 0.0,
+        });
+
+        sim.tick(0.10);
+        assert_eq!(sim.snapshot().bounty_events.len(), 1);
+
+        sim.tick(BOUNTY_EVENT_TTL);
+        assert!(sim.snapshot().bounty_events.is_empty());
     }
 
     #[test]
@@ -1336,6 +1948,25 @@ mod tests {
     }
 
     #[test]
+    fn each_race_has_eight_buildings_with_matching_units() {
+        let balance = BalanceConfig::default();
+        for race in RaceKind::ALL {
+            let config = balance.race(race);
+            assert_eq!(
+                config.buildings.len(),
+                8,
+                "{race:?} should have 8 buildings"
+            );
+            for building_kind in &config.buildings {
+                assert_eq!(building_kind.race(), race);
+                if let Some(unit_kind) = balance.building(*building_kind).spawned_unit {
+                    assert_eq!(unit_kind.race_like(), race);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rematch_resets_to_lobby() {
         let mut sim = ready_two_players();
         sim.finish(Team::Left);
@@ -1356,7 +1987,8 @@ mod tests {
     fn sudden_death_pressure_damages_weaker_board_more() {
         let mut sim = ready_two_players();
         let player = sim.players[0].id;
-        sim.place_building(
+        place_test_building(
+            &mut sim,
             player,
             BuildingKind::VanguardBarracks,
             GridCell { x: 0, y: 0 },
@@ -1376,7 +2008,8 @@ mod tests {
     fn simultaneous_castle_death_is_adjudicated_by_score() {
         let mut sim = ready_two_players();
         let player = sim.players[0].id;
-        sim.place_building(
+        place_test_building(
+            &mut sim,
             player,
             BuildingKind::VanguardBarracks,
             GridCell { x: 0, y: 0 },
@@ -1386,6 +2019,7 @@ mod tests {
             id: 900,
             owner: Team::Left,
             kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
             health: sim.balance.unit(UnitKind::VanguardGuard).max_health,
             lane_pos: Team::Left.spawn_pos(),
             attack_timer: 0.0,

@@ -20,15 +20,19 @@ struct ClientSession {
 }
 
 fn main() -> std::io::Result<()> {
-    let bind_addr = env::args()
-        .nth(1)
+    let mut args = env::args().skip(1);
+    let bind_addr = args
+        .next()
         .unwrap_or_else(|| DEFAULT_SERVER_ADDR.to_string());
+    let balance_path = args
+        .next()
+        .unwrap_or_else(|| DEFAULT_BALANCE_PATH.to_string());
     let socket = UdpSocket::bind(&bind_addr)?;
     socket.set_nonblocking(true)?;
     println!("Castle Lanes server listening on {bind_addr}");
 
-    let balance = BalanceConfig::load_or_default(DEFAULT_BALANCE_PATH);
-    println!("Loaded balance config from {DEFAULT_BALANCE_PATH}");
+    let balance = BalanceConfig::load_or_default(&balance_path);
+    println!("Loaded balance config from {balance_path}");
     let mut sim = GameSim::new(balance);
     let mut clients: HashMap<SocketAddr, ClientSession> = HashMap::new();
     let mut last_tick = Instant::now();
@@ -106,6 +110,7 @@ fn handle_packet(
                 },
             );
             send_packet(socket, addr, &ServerPacket::Welcome { player })?;
+            send_balance(socket, addr, &sim.balance)?;
         }
         ClientPacket::SetReady { player_id, ready } => {
             touch(clients, addr, player_id)?;
@@ -118,10 +123,12 @@ fn handle_packet(
         ClientPacket::PlaceBuilding {
             player_id,
             kind,
+            lane,
+            zone,
             cell,
         } => {
             touch(clients, addr, player_id)?;
-            sim.place_building(player_id, kind, cell)?;
+            sim.place_building(player_id, kind, lane, zone, cell)?;
         }
         ClientPacket::VoteRematch { player_id } => {
             touch(clients, addr, player_id)?;
@@ -160,6 +167,40 @@ fn broadcast_snapshot(
     for addr in clients.keys() {
         let _ = send_packet(socket, *addr, &packet);
     }
+}
+
+fn send_balance(
+    socket: &UdpSocket,
+    addr: SocketAddr,
+    balance: &BalanceConfig,
+) -> Result<(), String> {
+    send_packet(
+        socket,
+        addr,
+        &ServerPacket::BalanceRaces {
+            starting_gold: balance.starting_gold,
+            base_income: balance.base_income,
+            income_interval: balance.income_interval,
+            interest_rate: balance.interest_rate,
+            sudden_death_start: balance.sudden_death_start,
+            races: balance.races.clone(),
+        },
+    )?;
+    send_packet(
+        socket,
+        addr,
+        &ServerPacket::BalanceBuildings {
+            buildings: balance.buildings.clone(),
+        },
+    )?;
+    send_packet(
+        socket,
+        addr,
+        &ServerPacket::BalanceUnits {
+            units: balance.units.clone(),
+        },
+    )?;
+    Ok(())
 }
 
 fn send_packet(socket: &UdpSocket, addr: SocketAddr, packet: &ServerPacket) -> Result<(), String> {

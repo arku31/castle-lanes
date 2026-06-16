@@ -1,8 +1,11 @@
-use crate::sim::{BuildingKind, GridCell, MatchSnapshot, PlayerId, PlayerInfo, RaceKind};
+use crate::sim::{
+    BuildZone, BuildingConfig, BuildingKind, GridCell, Lane, MatchSnapshot, PlayerId, PlayerInfo,
+    RaceConfig, RaceKind, UnitConfig,
+};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_SERVER_ADDR: &str = "127.0.0.1:4000";
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientPacket {
@@ -21,6 +24,8 @@ pub enum ClientPacket {
     PlaceBuilding {
         player_id: PlayerId,
         kind: BuildingKind,
+        lane: Lane,
+        zone: BuildZone,
         cell: GridCell,
     },
     VoteRematch {
@@ -33,9 +38,27 @@ pub enum ClientPacket {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerPacket {
-    Welcome { player: PlayerInfo },
+    Welcome {
+        player: PlayerInfo,
+    },
+    BalanceRaces {
+        starting_gold: i32,
+        base_income: i32,
+        income_interval: f32,
+        interest_rate: f32,
+        sudden_death_start: f32,
+        races: Vec<RaceConfig>,
+    },
+    BalanceBuildings {
+        buildings: Vec<BuildingConfig>,
+    },
+    BalanceUnits {
+        units: Vec<UnitConfig>,
+    },
     Snapshot(MatchSnapshot),
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 pub fn encode<T: Serialize>(packet: &T) -> Result<Vec<u8>, serde_json::Error> {

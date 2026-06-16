@@ -4,18 +4,21 @@ Castle Lanes uses original generated bitmap art plus code-drawn UI and gameplay 
 
 ## Current Assets
 
-- `assets/art/isometric_battlefield.png`: main battlefield backdrop.
+- The battlefield background is now procedural Bevy rendering: neutral grass, subtle patches, and lightweight animated grass blades.
+- `assets/art/isometric_battlefield.png`: legacy/generated battlefield backdrop kept as source/reference, not currently spawned by the client.
 - `assets/art/rts_ui_frame.png`: generated UI style reference kept for future panel work.
-- `assets/art/units/unit_atlas_source.png`: generated six-unit atlas source.
+- `assets/art/units/unit_atlas_source.png`: generated original six-unit atlas source.
+- New race extension unit atlases were generated in Codex image generation output and sliced into project PNGs.
 - `assets/art/units/*.png`: cropped transparent unit sprites consumed by the Bevy client.
 - `assets/art/units/unit_sprites_contact.png`: contact sheet for quick visual review.
-- `assets/art/buildings/building_icons_atlas_source.png`: generated nine-building icon atlas source.
+- `assets/art/buildings/building_icons_atlas_source.png`: generated original nine-building icon atlas source.
+- New race extension building atlases were generated in Codex image generation output and sliced into project PNGs.
 - `assets/art/buildings/*.png`: cropped `128x128` building command icons consumed by the Bevy client.
 - `assets/art/buildings/building_icons_contact.png`: contact sheet for quick visual review.
 
 ## Unit Sprite Pipeline
 
-The current unit sprites were created as a single 3x2 atlas:
+The first unit sprites were created as a single 3x2 atlas:
 
 - Top row: Vanguard Guard, Vanguard Archer, Grove Bruiser.
 - Bottom row: Grove Needler, Ember Runner, Ember Caster.
@@ -38,6 +41,28 @@ assets/art/units/grove_needler.png
 assets/art/units/ember_runner.png
 assets/art/units/ember_caster.png
 ```
+
+The 8-building roster expansion added five new unit sprites per race:
+
+```text
+assets/art/units/vanguard_pikeman.png
+assets/art/units/vanguard_shieldbearer.png
+assets/art/units/vanguard_battle_cleric.png
+assets/art/units/vanguard_lancer.png
+assets/art/units/vanguard_ballista.png
+assets/art/units/grove_sproutling.png
+assets/art/units/grove_barkguard.png
+assets/art/units/grove_mire_shaman.png
+assets/art/units/grove_vine_stalker.png
+assets/art/units/grove_treant_colossus.png
+assets/art/units/ember_spark_imp.png
+assets/art/units/ember_obsidian_guard.png
+assets/art/units/ember_fire_lancer.png
+assets/art/units/ember_smoke_witch.png
+assets/art/units/ember_cinder_engine.png
+```
+
+These were generated as three 5-sprite race atlases, then sliced into `128x128` transparent PNGs.
 
 ## Prompt Template
 
@@ -87,6 +112,26 @@ Building icon processing should:
 - resize each cell to `128x128`,
 - keep the generated icon frame and painted background,
 - create a contact sheet for inspection.
+
+The 8-building roster expansion added five new building icons per race:
+
+```text
+assets/art/buildings/vanguard_pike_yard.png
+assets/art/buildings/vanguard_bulwark_hall.png
+assets/art/buildings/vanguard_chapel.png
+assets/art/buildings/vanguard_stables.png
+assets/art/buildings/vanguard_siege_workshop.png
+assets/art/buildings/grove_moss_nursery.png
+assets/art/buildings/grove_bark_bastion.png
+assets/art/buildings/grove_mire_pool.png
+assets/art/buildings/grove_vine_warren.png
+assets/art/buildings/grove_ancient_seed.png
+assets/art/buildings/ember_spark_kennel.png
+assets/art/buildings/ember_obsidian_gate.png
+assets/art/buildings/ember_blaze_stable.png
+assets/art/buildings/ember_smoke_altar.png
+assets/art/buildings/ember_inferno_engine.png
+```
 
 ## Client Integration
 

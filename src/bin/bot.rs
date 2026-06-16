@@ -1,7 +1,9 @@
 use castle_lanes::net::{
     ClientPacket, DEFAULT_SERVER_ADDR, PROTOCOL_VERSION, ServerPacket, decode_server, encode,
 };
-use castle_lanes::sim::{BuildingKind, GridCell, MatchPhase, PlayerId, RaceKind};
+use castle_lanes::sim::{
+    BuildZone, BuildingKind, GridCell, Lane, MatchPhase, PlayerId, RaceKind, Team,
+};
 use std::env;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
@@ -25,8 +27,9 @@ fn main() -> std::io::Result<()> {
     let mut sent_race = false;
     let mut sent_ready = false;
     let mut sent_building = false;
+    let mut sent_rematch = false;
     let mut last_phase = None;
-    let mut buf = [0_u8; 16_384];
+    let mut buf = [0_u8; 65_535];
 
     loop {
         if player_id.is_none() && last_join.elapsed() > Duration::from_secs(1) {
@@ -54,14 +57,20 @@ fn main() -> std::io::Result<()> {
         loop {
             match socket.recv_from(&mut buf) {
                 Ok((len, _)) => match decode_server(&buf[..len]) {
-                    Ok(ServerPacket::Welcome { player }) => {
+                    Ok(ServerPacket::Welcome { player, .. }) => {
                         if !printed_welcome {
                             println!("Joined as {} ({:?})", player.name, player.team);
                             printed_welcome = true;
                         }
                         player_id = Some(player.id);
                     }
+                    Ok(
+                        ServerPacket::BalanceRaces { .. }
+                        | ServerPacket::BalanceBuildings { .. }
+                        | ServerPacket::BalanceUnits { .. },
+                    ) => {}
                     Ok(ServerPacket::Snapshot(snapshot)) => {
+                        let previous_phase = last_phase;
                         if last_phase != Some(snapshot.phase) {
                             println!("Phase: {:?} - {}", snapshot.phase, snapshot.message);
                             last_phase = Some(snapshot.phase);
@@ -69,6 +78,14 @@ fn main() -> std::io::Result<()> {
                         let Some(id) = player_id else {
                             continue;
                         };
+                        if previous_phase == Some(MatchPhase::GameOver)
+                            && snapshot.phase == MatchPhase::Lobby
+                        {
+                            sent_race = false;
+                            sent_ready = false;
+                            sent_building = false;
+                            sent_rematch = false;
+                        }
                         if !sent_race {
                             send(
                                 &socket,
@@ -93,17 +110,33 @@ fn main() -> std::io::Result<()> {
                             sent_ready = true;
                         }
                         if snapshot.phase == MatchPhase::Playing && !sent_building {
+                            let Some(player) =
+                                snapshot.players.iter().find(|player| player.id == id)
+                            else {
+                                continue;
+                            };
                             send(
                                 &socket,
                                 options.server_addr,
                                 &ClientPacket::PlaceBuilding {
                                     player_id: id,
                                     kind: options.building,
+                                    lane: default_lane_for_team(player.team),
+                                    zone: BuildZone::Front,
                                     cell: GridCell { x: 0, y: 0 },
                                 },
                             );
                             sent_building = true;
                             println!("Placed {}", options.building.fallback_name());
+                        }
+                        if snapshot.phase == MatchPhase::GameOver && !sent_rematch {
+                            send(
+                                &socket,
+                                options.server_addr,
+                                &ClientPacket::VoteRematch { player_id: id },
+                            );
+                            sent_rematch = true;
+                            println!("Voted for rematch");
                         }
                     }
                     Ok(ServerPacket::Error { message }) => {
@@ -184,6 +217,13 @@ fn default_building_for_race(race: RaceKind) -> BuildingKind {
         RaceKind::Vanguard => BuildingKind::VanguardRangeTower,
         RaceKind::Grove => BuildingKind::GroveThornSpire,
         RaceKind::Ember => BuildingKind::EmberFlameSpire,
+    }
+}
+
+fn default_lane_for_team(team: Team) -> Lane {
+    match team {
+        Team::Left => Lane::Top,
+        Team::Right => Lane::Bottom,
     }
 }
 
