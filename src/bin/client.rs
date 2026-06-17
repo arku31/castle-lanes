@@ -417,6 +417,7 @@ fn receive_packets(mut net: ResMut<ClientNet>, mut state: ResMut<SnapshotState>)
                     base_income,
                     income_interval,
                     interest_rate,
+                    castle_regen_per_second,
                     sudden_death_start,
                     races,
                 }) => {
@@ -424,6 +425,7 @@ fn receive_packets(mut net: ResMut<ClientNet>, mut state: ResMut<SnapshotState>)
                     state.balance.base_income = base_income;
                     state.balance.income_interval = income_interval;
                     state.balance.interest_rate = interest_rate;
+                    state.balance.castle_regen_per_second = castle_regen_per_second;
                     state.balance.sudden_death_start = sudden_death_start;
                     state.balance.races = races;
                 }
@@ -2346,6 +2348,26 @@ fn spawn_structure_impact(
     source: Vec2,
     attack_type: AttackType,
 ) {
+    commands.spawn((
+        Sprite::from_color(Color::srgba(1.0, 0.24, 0.08, 0.34), Vec2::new(58.0, 46.0)),
+        Transform::from_xyz(target.x, target.y - 8.0, VFX_Z + 1.0)
+            .with_rotation(Quat::from_rotation_z(0.10)),
+        CombatVfx {
+            lifetime: 0.26,
+            max_lifetime: 0.26,
+            velocity: Vec2::ZERO,
+        },
+    ));
+    commands.spawn((
+        Sprite::from_color(Color::srgba(1.0, 0.78, 0.24, 0.28), Vec2::new(44.0, 34.0)),
+        Transform::from_xyz(target.x, target.y - 8.0, VFX_Z + 1.5)
+            .with_rotation(Quat::from_rotation_z(-0.08)),
+        CombatVfx {
+            lifetime: 0.18,
+            max_lifetime: 0.18,
+            velocity: Vec2::ZERO,
+        },
+    ));
     spawn_combat_impact(commands, target, damage, source, attack_type, false);
     let debris_color = Color::srgb(0.74, 0.56, 0.34);
     for (idx, offset) in [

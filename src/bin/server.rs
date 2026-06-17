@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 const TICK_RATE: Duration = Duration::from_millis(33);
 const SNAPSHOT_RATE: Duration = Duration::from_millis(100);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(8);
+const SAFE_UDP_PAYLOAD_BYTES: usize = 1200;
+const MAX_UDP_PAYLOAD_BYTES: usize = 60_000;
+const SNAPSHOT_SIZE_LOG_INTERVAL_TICKS: u64 = 30;
 
 #[derive(Debug, Clone)]
 struct ClientSession {
@@ -164,8 +167,32 @@ fn broadcast_snapshot(
     sim: &GameSim,
 ) {
     let packet = ServerPacket::Snapshot(sim.snapshot());
+    let bytes = match encode(&packet) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            eprintln!("snapshot encode failed: {err}");
+            return;
+        }
+    };
+
+    if bytes.len() > SAFE_UDP_PAYLOAD_BYTES && sim.tick % SNAPSHOT_SIZE_LOG_INTERVAL_TICKS == 0 {
+        eprintln!(
+            "snapshot is {} bytes for {} units / {} buildings; UDP fragmentation is likely",
+            bytes.len(),
+            sim.units.len(),
+            sim.buildings.len()
+        );
+    }
+    if bytes.len() > MAX_UDP_PAYLOAD_BYTES {
+        eprintln!(
+            "snapshot is {} bytes and too large for UDP; skipped broadcast",
+            bytes.len()
+        );
+        return;
+    }
+
     for addr in clients.keys() {
-        let _ = send_packet(socket, *addr, &packet);
+        let _ = socket.send_to(&bytes, *addr);
     }
 }
 
@@ -182,6 +209,7 @@ fn send_balance(
             base_income: balance.base_income,
             income_interval: balance.income_interval,
             interest_rate: balance.interest_rate,
+            castle_regen_per_second: balance.castle_regen_per_second,
             sudden_death_start: balance.sudden_death_start,
             races: balance.races.clone(),
         },

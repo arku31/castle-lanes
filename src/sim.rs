@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-pub const CASTLE_HEALTH: i32 = 1000;
+pub const CASTLE_HEALTH: i32 = 10000;
 pub const STARTING_GOLD: i32 = 150;
 pub const BASE_INCOME: i32 = 10;
 pub const INCOME_INTERVAL: f32 = 10.0;
@@ -11,7 +11,8 @@ pub const INTEREST_RATE: f32 = 0.04;
 pub const GRID_W: i32 = 10;
 pub const GRID_H: i32 = 5;
 pub const LANE_LENGTH: f32 = 100.0;
-pub const SUDDEN_DEATH_START: f32 = 180.0;
+pub const SUDDEN_DEATH_START: f32 = 600.0;
+pub const CASTLE_REGEN_PER_SECOND: f32 = 10.0;
 pub const DEFAULT_BALANCE_PATH: &str = "config/balance.json";
 const BOUNTY_EVENT_TTL: f32 = 0.75;
 const CASTLE_JUNCTION_RANGE: f32 = 18.0;
@@ -569,6 +570,8 @@ pub struct BalanceConfig {
     pub income_interval: f32,
     #[serde(default = "default_interest_rate")]
     pub interest_rate: f32,
+    #[serde(default = "default_castle_regen_per_second")]
+    pub castle_regen_per_second: f32,
     pub sudden_death_start: f32,
     pub races: Vec<RaceConfig>,
     pub buildings: Vec<BuildingConfig>,
@@ -690,6 +693,10 @@ fn default_damage_variance() -> f32 {
 
 fn default_interest_rate() -> f32 {
     INTEREST_RATE
+}
+
+fn default_castle_regen_per_second() -> f32 {
+    CASTLE_REGEN_PER_SECOND
 }
 
 fn default_bounty() -> i32 {
@@ -842,6 +849,7 @@ pub struct GameSim {
     rng_state: u64,
     income_timer: f32,
     elapsed_secs: f32,
+    castle_regen_accum: [f32; 2],
     overtime_damage_accum: [f32; 2],
 }
 
@@ -888,6 +896,7 @@ impl GameSim {
             rng_state: 0xC057_1A4E_5EED,
             income_timer,
             elapsed_secs: 0.0,
+            castle_regen_accum: [0.0, 0.0],
             overtime_damage_accum: [0.0, 0.0],
         }
     }
@@ -1194,6 +1203,7 @@ impl GameSim {
         self.winner = None;
         self.income_timer = self.balance.income_interval;
         self.elapsed_secs = 0.0;
+        self.castle_regen_accum = [0.0, 0.0];
         self.overtime_damage_accum = [0.0, 0.0];
     }
 
@@ -1456,8 +1466,35 @@ impl GameSim {
                 age: 0.0,
             });
         }
+        self.apply_castle_regen_and_damage(dt, castle_damage);
+    }
+
+    fn apply_castle_regen_and_damage(&mut self, dt: f32, castle_damage: [i32; 2]) {
+        let regen_per_second = self.balance.castle_regen_per_second.max(0.0);
         for (idx, damage) in castle_damage.into_iter().enumerate() {
-            self.castles[idx].health = (self.castles[idx].health - damage).max(0);
+            if self.castles[idx].health <= 0 {
+                continue;
+            }
+
+            if regen_per_second > 0.0
+                && (self.castles[idx].health < self.castles[idx].max_health || damage > 0)
+            {
+                self.castle_regen_accum[idx] += regen_per_second * dt;
+            }
+
+            let regen = self.castle_regen_accum[idx].floor() as i32;
+            if regen > 0 {
+                self.castle_regen_accum[idx] -= regen as f32;
+            }
+
+            self.castles[idx].health =
+                (self.castles[idx].health + regen - damage).clamp(0, self.castles[idx].max_health);
+
+            if self.castles[idx].health == 0
+                || self.castles[idx].health == self.castles[idx].max_health
+            {
+                self.castle_regen_accum[idx] = 0.0;
+            }
         }
     }
 
@@ -2095,6 +2132,45 @@ mod tests {
     }
 
     #[test]
+    fn castles_regenerate_to_full_when_not_under_attack() {
+        let mut sim = ready_two_players();
+        let slot = Team::Right.slot();
+        let max_health = sim.castles[slot].max_health;
+        sim.castles[slot].health = max_health - 25;
+
+        sim.tick(1.0);
+
+        assert_eq!(
+            sim.castles[slot].health,
+            max_health - 25 + sim.balance.castle_regen_per_second as i32
+        );
+
+        sim.tick(10.0);
+
+        assert_eq!(sim.castles[slot].health, max_health);
+    }
+
+    #[test]
+    fn weakest_single_unit_is_offset_by_castle_regeneration() {
+        let mut sim = ready_two_players();
+        let slot = Team::Right.slot();
+        let max_health = sim.castles[slot].max_health;
+        sim.units.push(test_unit(
+            740,
+            Team::Left,
+            UnitKind::GroveSproutling,
+            Lane::Top,
+            sim.balance.unit(UnitKind::GroveSproutling).max_health,
+            Team::Right.castle_pos() - 1.0,
+            0.0,
+        ));
+
+        sim.tick(1.0);
+
+        assert_eq!(sim.castles[slot].health, max_health);
+    }
+
+    #[test]
     fn units_can_destroy_castle_and_end_match() {
         let mut sim = ready_two_players();
         let unit_config = sim.balance.unit(UnitKind::VanguardGuard);
@@ -2111,7 +2187,7 @@ mod tests {
         let (min_damage, _) = damage_range(unit_config.damage, unit_config.damage_variance);
         sim.castles[Team::Right.slot()].health =
             typed_damage(min_damage, unit_config.attack_type, castle_armor);
-        sim.tick(0.1);
+        sim.tick(0.01);
         assert_eq!(sim.phase, MatchPhase::GameOver);
         assert_eq!(sim.winner, Some(Team::Left));
     }

@@ -46,6 +46,8 @@ pub enum ServerPacket {
         base_income: i32,
         income_interval: f32,
         interest_rate: f32,
+        #[serde(default = "default_castle_regen_per_second")]
+        castle_regen_per_second: f32,
         sudden_death_start: f32,
         races: Vec<RaceConfig>,
     },
@@ -71,4 +73,8 @@ pub fn decode_client(bytes: &[u8]) -> Result<ClientPacket, serde_json::Error> {
 
 pub fn decode_server(bytes: &[u8]) -> Result<ServerPacket, serde_json::Error> {
     serde_json::from_slice(bytes)
+}
+
+fn default_castle_regen_per_second() -> f32 {
+    crate::sim::CASTLE_REGEN_PER_SECOND
 }

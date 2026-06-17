@@ -3,12 +3,13 @@
   "base_income": 10,
   "income_interval": 10.0,
   "interest_rate": 0.04,
-  "sudden_death_start": 180.0,
+  "castle_regen_per_second": 10.0,
+  "sudden_death_start": 600.0,
   "races": [
     {
       "kind": "Vanguard",
       "name": "Vanguard",
-      "castle_health": 1000,
+      "castle_health": 10000,
       "castle_armor": "Fortified",
       "buildings": [
         "VanguardBarracks",
@@ -24,7 +25,7 @@
     {
       "kind": "Grove",
       "name": "Grove",
-      "castle_health": 1250,
+      "castle_health": 12500,
       "castle_armor": "Fortified",
       "buildings": [
         "GroveRootDen",
@@ -40,7 +41,7 @@
     {
       "kind": "Ember",
       "name": "Ember",
-      "castle_health": 850,
+      "castle_health": 8500,
       "castle_armor": "Fortified",
       "buildings": [
         "EmberCinderPit",
