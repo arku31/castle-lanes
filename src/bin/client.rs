@@ -16,6 +16,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 const WORLD_W: f32 = 2400.0;
+const SIM_Y_TO_WORLD: f32 = 16.0;
 const LANE_Y: f32 = 0.0;
 const MAP_W: f32 = 3600.0;
 const MAP_H: f32 = 560.0;
@@ -23,11 +24,15 @@ const CELL: f32 = 38.0;
 const UI_PANEL_TOP_Y: f32 = -164.0;
 const UI_PANEL_Y: f32 = -258.0;
 const TOP_BAR_Y: f32 = 330.0;
-const MINIMAP_CENTER: Vec2 = Vec2::new(418.0, 210.0);
-const MINIMAP_SIZE: Vec2 = Vec2::new(212.0, 116.0);
+const COMMAND_GRID_ORIGIN: Vec2 = Vec2::new(270.0, UI_PANEL_Y + 48.0);
+const MINIMAP_CENTER: Vec2 = Vec2::new(-412.0, UI_PANEL_Y + 4.0);
+const MINIMAP_SIZE: Vec2 = Vec2::new(184.0, 132.0);
 const REVEAL_CASTLE_RADIUS: f32 = 430.0;
 const REVEAL_BUILDING_RADIUS: f32 = 150.0;
 const REVEAL_UNIT_RADIUS: f32 = 185.0;
+const FOG_COLUMNS: usize = 96;
+const FOG_ROWS: usize = 34;
+const FOG_SOFT_EDGE: f32 = 82.0;
 const PANEL_BG: Color = Color::srgba(0.045, 0.040, 0.035, 0.92);
 const PANEL_EDGE: Color = Color::srgba(0.58, 0.43, 0.22, 0.95);
 const TEXT_GOLD: Color = Color::srgb(0.95, 0.78, 0.42);
@@ -89,6 +94,21 @@ struct CameraHome {
     initialized_for: Option<Team>,
 }
 
+#[derive(Resource)]
+struct FogMemory {
+    team: Option<Team>,
+    explored: Vec<bool>,
+}
+
+impl Default for FogMemory {
+    fn default() -> Self {
+        Self {
+            team: None,
+            explored: vec![false; FOG_COLUMNS * FOG_ROWS],
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SelectedObject {
     Unit(u64),
@@ -101,12 +121,18 @@ enum SelectedObject {
 struct CombatTracker {
     initialized: bool,
     units: HashMap<u64, TrackedUnit>,
+    buildings: HashMap<u64, TrackedBuilding>,
     castle_health: [i32; 2],
     seen_bounty_events: HashSet<u64>,
 }
 
 #[derive(Clone, Copy)]
 struct TrackedUnit {
+    health: i32,
+}
+
+#[derive(Clone, Copy)]
+struct TrackedBuilding {
     health: i32,
 }
 
@@ -234,6 +260,7 @@ fn main() {
         .init_resource::<WorldHover>()
         .init_resource::<CombatTracker>()
         .init_resource::<CameraHome>()
+        .init_resource::<FogMemory>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -248,6 +275,7 @@ fn main() {
                 detect_combat_vfx,
                 update_build_hover,
                 update_world_hover,
+                update_fog_memory,
                 redraw_scene,
                 update_placement_preview,
                 redraw_game_ui,
@@ -612,7 +640,7 @@ fn placement_input(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     net: Res<ClientNet>,
-    selection: Res<BuildSelection>,
+    mut selection: ResMut<BuildSelection>,
     mut world_selection: ResMut<WorldSelection>,
     state: Res<SnapshotState>,
 ) {
@@ -673,6 +701,7 @@ fn placement_input(
         },
     );
     world_selection.selected = Some(SelectedObject::Cell(team, lane, zone, cell));
+    selection.kind = None;
 }
 
 fn can_place_building(
@@ -853,12 +882,14 @@ fn detect_combat_vfx(
     let Some(snapshot) = &state.snapshot else {
         tracker.initialized = false;
         tracker.units.clear();
+        tracker.buildings.clear();
         tracker.seen_bounty_events.clear();
         return;
     };
     if snapshot.phase != MatchPhase::Playing {
         tracker.initialized = false;
         tracker.units.clear();
+        tracker.buildings.clear();
         tracker.seen_bounty_events.clear();
         tracker.castle_health = [0, 0];
         return;
@@ -895,6 +926,30 @@ fn detect_combat_vfx(
             }
         }
 
+        for building in &snapshot.buildings {
+            if !is_building_visible(snapshot, net.team, building) {
+                continue;
+            }
+            if let Some(previous) = tracker.buildings.get(&building.id) {
+                if building.health < previous.health {
+                    let damage = previous.health - building.health;
+                    let pos = building_hit_pos(building);
+                    let attacker = infer_attacker(snapshot, &balance, pos, building.owner)
+                        .map(|attacker| {
+                            (
+                                unit_world_pos(attacker),
+                                balance.unit(attacker.kind).attack_type,
+                            )
+                        })
+                        .unwrap_or((
+                            Vec2::new(pos.x - building.owner.opponent().direction() * 58.0, pos.y),
+                            AttackType::Siege,
+                        ));
+                    spawn_structure_impact(&mut commands, pos, damage, attacker.0, attacker.1);
+                }
+            }
+        }
+
         for castle in &snapshot.castles {
             if !is_castle_visible(snapshot, net.team, castle.team) {
                 continue;
@@ -925,10 +980,7 @@ fn detect_combat_vfx(
         if let Some(team) = net.team {
             for event in &snapshot.bounty_events {
                 if event.team == team && !tracker.seen_bounty_events.contains(&event.id) {
-                    let pos = Vec2::new(
-                        lane_to_world(event.lane_pos),
-                        lane_world_y(event.lane) + 34.0,
-                    );
+                    let pos = sim_pos_to_world(event.pos) + Vec2::new(0.0, 34.0);
                     spawn_bounty_text(&mut commands, pos, event.amount);
                     tracker.seen_bounty_events.insert(event.id);
                 }
@@ -944,6 +996,18 @@ fn detect_combat_vfx(
                 unit.id,
                 TrackedUnit {
                     health: unit.health,
+                },
+            )
+        })
+        .collect();
+    tracker.buildings = snapshot
+        .buildings
+        .iter()
+        .map(|building| {
+            (
+                building.id,
+                TrackedBuilding {
+                    health: building.health,
                 },
             )
         })
@@ -1104,17 +1168,48 @@ fn camera_x_bounds(scale: f32, window: Option<&Window>) -> Option<(f32, f32)> {
     Some((-bound, bound))
 }
 
+fn update_fog_memory(mut fog: ResMut<FogMemory>, state: Res<SnapshotState>, net: Res<ClientNet>) {
+    if fog.team != net.team {
+        fog.team = net.team;
+        fog.explored.fill(false);
+    }
+    if net.team.is_none() {
+        fog.explored.fill(true);
+        return;
+    }
+    if !state.is_changed() {
+        return;
+    }
+    let (Some(snapshot), Some(team)) = (&state.snapshot, net.team) else {
+        return;
+    };
+
+    for row in 0..FOG_ROWS {
+        for col in 0..FOG_COLUMNS {
+            let pos = fog_cell_center(col, row);
+            if world_reveal_strength(snapshot, team, pos) > 0.05 {
+                fog.explored[fog_index(col, row)] = true;
+            }
+        }
+    }
+}
+
 fn redraw_scene(
     mut commands: Commands,
     scene_query: Query<Entity, With<SceneEntity>>,
     state: Res<SnapshotState>,
     net: Res<ClientNet>,
+    fog: Res<FogMemory>,
     world_selection: Res<WorldSelection>,
     world_hover: Res<WorldHover>,
     unit_assets: Res<UnitSpriteAssets>,
     building_icons: Res<BuildingIconAssets>,
 ) {
-    if !state.is_changed() && !world_selection.is_changed() && !world_hover.is_changed() {
+    if !state.is_changed()
+        && !fog.is_changed()
+        && !world_selection.is_changed()
+        && !world_hover.is_changed()
+    {
         return;
     }
     for entity in &scene_query {
@@ -1130,6 +1225,9 @@ fn redraw_scene(
 
     for building in &snapshot.buildings {
         if !is_building_visible(snapshot, net.team, building) {
+            if is_enemy_building_scouted(snapshot, &fog, net.team, building) {
+                spawn_building_silhouette(&mut commands, building);
+            }
             continue;
         }
         let highlighted = world_selection.selected == Some(SelectedObject::Building(building.id))
@@ -1168,7 +1266,7 @@ fn redraw_scene(
             world_selection.selected == Some(SelectedObject::Castle(castle.team)),
         );
     }
-    spawn_fog_of_war(&mut commands, snapshot, net.team);
+    spawn_fog_of_war(&mut commands, snapshot, &fog, net.team);
 }
 
 fn redraw_game_ui(
@@ -1178,11 +1276,11 @@ fn redraw_game_ui(
     camera_query: Query<(&Transform, &Projection), With<Camera2d>>,
     state: Res<SnapshotState>,
     net: Res<ClientNet>,
+    fog: Res<FogMemory>,
     selection: Res<BuildSelection>,
     hover: Res<BuildHover>,
     world_selection: Res<WorldSelection>,
-    world_hover: Res<WorldHover>,
-    unit_assets: Res<UnitSpriteAssets>,
+    _world_hover: Res<WorldHover>,
     building_icons: Res<BuildingIconAssets>,
 ) {
     for entity in &ui_query {
@@ -1190,251 +1288,48 @@ fn redraw_game_ui(
     }
 
     let balance = active_balance(&state);
-    spawn_ui_panel(
-        &mut commands,
-        Vec2::new(0.0, TOP_BAR_Y),
-        Vec2::new(1048.0, 46.0),
-        40.0,
-    );
-    spawn_ui_label(
-        &mut commands,
-        "CASTLE LANES",
-        Vec2::new(-506.0, TOP_BAR_Y + 6.0),
-        20.0,
-        TEXT_GOLD,
-        45.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
-    );
-    spawn_ui_label(
-        &mut commands,
-        &format!("{}  |  {}", net.player_name, net.server_addr),
-        Vec2::new(-506.0, TOP_BAR_Y - 15.0),
-        11.0,
-        Color::srgb(0.71, 0.68, 0.58),
-        45.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
-    );
+    let (phase_line, _economy_line, _message_line) = ui_summary(&state, &net);
+    let selected_race = selected_race(&state, &net);
+    let race_popup_open = race_selection_popup_open(&state, &net);
+    spawn_top_hud(&mut commands, &state, &net, &balance, &phase_line);
 
-    let (phase_line, economy_line, message_line) = ui_summary(&state, &net);
-    spawn_ui_label(
-        &mut commands,
-        &phase_line,
-        Vec2::new(0.0, TOP_BAR_Y + 10.0),
-        15.0,
-        TEXT_PARCHMENT,
-        45.0,
-        Anchor::CENTER,
-        Justify::Center,
-    );
-    spawn_ui_label(
-        &mut commands,
-        &economy_line,
-        Vec2::new(508.0, TOP_BAR_Y - 12.0),
-        13.0,
-        TEXT_GOLD,
-        45.0,
-        Anchor::CENTER_RIGHT,
-        Justify::Right,
-    );
+    spawn_bottom_console(&mut commands);
 
     if let Some(snapshot) = &state.snapshot {
         spawn_minimap(
             &mut commands,
             snapshot,
+            &fog,
             net.team,
             camera_query.single().ok(),
             windows.single().ok(),
         );
     }
 
-    spawn_ui_panel(
-        &mut commands,
-        Vec2::new(0.0, UI_PANEL_Y),
-        Vec2::new(1048.0, 188.0),
-        40.0,
-    );
-    spawn_ui_panel(
-        &mut commands,
-        Vec2::new(-430.0, UI_PANEL_Y + 9.0),
-        Vec2::new(180.0, 132.0),
-        42.0,
-    );
-    spawn_ui_panel(
-        &mut commands,
-        Vec2::new(-72.0, UI_PANEL_Y + 9.0),
-        Vec2::new(302.0, 132.0),
-        42.0,
-    );
-    spawn_ui_panel(
-        &mut commands,
-        Vec2::new(352.0, UI_PANEL_Y + 9.0),
-        Vec2::new(300.0, 164.0),
-        42.0,
-    );
-
-    let selected_race = selected_race(&state, &net);
-    let race_popup_open = race_selection_popup_open(&state, &net);
-    let local_title = local_player_title(&state, &net);
-    spawn_ui_label(
-        &mut commands,
-        &local_title,
-        Vec2::new(-510.0, UI_PANEL_Y + 42.0),
-        14.0,
-        TEXT_PARCHMENT,
-        46.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
-    );
-    spawn_ui_label(
-        &mut commands,
-        &selected_race
-            .map(|race| format!("Race: {}", balance.race(race).name))
-            .unwrap_or_else(|| "Race: Choose".to_string()),
-        Vec2::new(-510.0, UI_PANEL_Y + 20.0),
-        12.0,
-        Color::srgb(0.72, 0.91, 0.82),
-        46.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
-    );
-    spawn_ui_label(
-        &mut commands,
-        if race_popup_open {
-            "Choose in popup"
-        } else {
-            "Ready"
-        },
-        Vec2::new(-510.0, UI_PANEL_Y - 2.0),
-        11.0,
-        Color::srgb(0.64, 0.61, 0.52),
-        46.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
-    );
-
     let selected_details =
-        selected_object_details(&state, &world_selection, selection.kind, net.team)
-            .unwrap_or(message_line);
-    spawn_ui_label(
+        selected_object_details(&state, &world_selection, selection.kind, net.team).or_else(|| {
+            selection
+                .kind
+                .map(|kind| selected_build_details(&balance, kind))
+        });
+    spawn_context_bay(
         &mut commands,
-        &selected_details,
-        Vec2::new(-214.0, UI_PANEL_Y + 42.0),
-        12.0,
-        TEXT_PARCHMENT,
-        46.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
-    );
-    spawn_ui_label(
-        &mut commands,
-        "Enter join  |  R rematch",
-        Vec2::new(-214.0, UI_PANEL_Y - 16.0),
-        10.5,
-        Color::srgb(0.66, 0.62, 0.51),
-        46.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
+        selected_details.as_deref(),
+        race_popup_open,
+        world_selection.selected.is_some() || selection.kind.is_some(),
     );
 
-    let inspected_building = state.snapshot.as_ref().and_then(|snapshot| {
-        inspected_building(snapshot, &world_selection, &world_hover, net.team)
-    });
-
-    if let Some(building) = inspected_building {
-        spawn_building_inspector(
-            &mut commands,
-            &balance,
-            &building_icons,
-            &unit_assets,
-            building,
-        );
-    } else if !race_popup_open {
+    if !race_popup_open {
         if let Some(race) = selected_race {
-            spawn_ui_label(
+            spawn_command_card(
                 &mut commands,
-                "BUILD",
-                Vec2::new(216.0, UI_PANEL_Y + 83.0),
-                11.0,
-                TEXT_GOLD,
-                46.0,
-                Anchor::TOP_LEFT,
-                Justify::Left,
-            );
-            for (idx, kind) in balance.race(race).buildings.iter().enumerate() {
-                let config = balance.building(*kind);
-                let center = command_button_center(idx);
-                let selected = selection.kind == Some(*kind);
-                let hovered = hover.kind == Some(*kind);
-                let color = if hovered {
-                    Color::srgba(0.22, 0.18, 0.10, 0.98)
-                } else {
-                    Color::srgba(0.08, 0.07, 0.055, 0.96)
-                };
-                spawn_ui_button(&mut commands, center, Vec2::splat(54.0), color, selected);
-                spawn_ui_image(
-                    &mut commands,
-                    building_icon_handle(&building_icons, *kind),
-                    center,
-                    Vec2::splat(if hovered { 50.0 } else { 46.0 }),
-                    46.2,
-                );
-                if let Some(unit_kind) = config.spawned_unit {
-                    let unit = balance.unit(unit_kind);
-                    spawn_ui_rect(
-                        &mut commands,
-                        Vec2::new(center.x - 14.0, center.y + 15.0),
-                        Vec2::new(18.0, 6.0),
-                        attack_type_color(unit.attack_type),
-                        47.0,
-                    );
-                    spawn_ui_rect(
-                        &mut commands,
-                        Vec2::new(center.x + 14.0, center.y + 15.0),
-                        Vec2::new(18.0, 6.0),
-                        armor_type_color(unit.armor_type),
-                        47.0,
-                    );
-                }
-                spawn_ui_label(
-                    &mut commands,
-                    &command_button_badge(&balance, *kind),
-                    Vec2::new(center.x, center.y - 18.0),
-                    8.5,
-                    Color::srgb(0.98, 0.90, 0.66),
-                    47.0,
-                    Anchor::CENTER,
-                    Justify::Center,
-                );
-            }
-            let cancel_center = command_button_center(8);
-            spawn_ui_button(
-                &mut commands,
-                cancel_center,
-                Vec2::splat(54.0),
-                Color::srgba(0.055, 0.050, 0.045, 0.92),
-                selection.kind.is_none(),
-            );
-            spawn_ui_label(
-                &mut commands,
-                "X",
-                Vec2::new(cancel_center.x, cancel_center.y + 4.0),
-                22.0,
-                Color::srgb(0.55, 0.48, 0.38),
-                47.0,
-                Anchor::CENTER,
-                Justify::Center,
-            );
-            spawn_ui_label(
-                &mut commands,
-                "ESC",
-                Vec2::new(cancel_center.x, cancel_center.y - 18.0),
-                8.0,
-                Color::srgb(0.58, 0.54, 0.46),
-                47.0,
-                Anchor::CENTER,
-                Justify::Center,
+                &balance,
+                &building_icons,
+                &state,
+                &net,
+                race,
+                selection.kind,
+                hover.kind,
             );
         }
     }
@@ -1485,6 +1380,293 @@ fn redraw_game_ui(
     }
 }
 
+fn spawn_top_hud(
+    commands: &mut Commands,
+    state: &SnapshotState,
+    net: &ClientNet,
+    balance: &BalanceConfig,
+    phase_line: &str,
+) {
+    spawn_ui_panel(
+        commands,
+        Vec2::new(0.0, TOP_BAR_Y + 5.0),
+        Vec2::new(1048.0, 36.0),
+        40.0,
+    );
+    let race = selected_race(state, net);
+    let left_label = race
+        .map(|race| format!("{}  {}", balance.race(race).name, net.player_name))
+        .unwrap_or_else(|| format!("Commander  {}", net.player_name));
+    spawn_ui_label(
+        commands,
+        &left_label,
+        Vec2::new(-502.0, TOP_BAR_Y + 10.0),
+        13.0,
+        TEXT_PARCHMENT,
+        45.0,
+        Anchor::TOP_LEFT,
+        Justify::Left,
+    );
+    spawn_ui_label(
+        commands,
+        phase_line,
+        Vec2::new(0.0, TOP_BAR_Y + 10.0),
+        14.0,
+        TEXT_GOLD,
+        45.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+
+    if let (Some(snapshot), Some(player_id)) = (&state.snapshot, net.player_id) {
+        if let Some(player) = current_player(snapshot, player_id) {
+            let econ = &snapshot.economies[player.team.slot()];
+            let castle = &snapshot.castles[player.team.slot()];
+            spawn_resource_chip(
+                commands,
+                Vec2::new(206.0, TOP_BAR_Y + 6.0),
+                "GOLD",
+                &econ.gold.to_string(),
+                TEXT_GOLD,
+            );
+            spawn_resource_chip(
+                commands,
+                Vec2::new(298.0, TOP_BAR_Y + 6.0),
+                "INC",
+                &econ.income.to_string(),
+                Color::srgb(0.58, 0.92, 0.62),
+            );
+            spawn_ui_label(
+                commands,
+                "CASTLE",
+                Vec2::new(376.0, TOP_BAR_Y + 12.0),
+                8.5,
+                Color::srgb(0.62, 0.58, 0.48),
+                45.0,
+                Anchor::TOP_LEFT,
+                Justify::Left,
+            );
+            spawn_value_bar(
+                commands,
+                Vec2::new(438.0, TOP_BAR_Y + 7.0),
+                Vec2::new(104.0, 8.0),
+                castle.health.max(0) as f32 / castle.max_health.max(1) as f32,
+                Color::srgb(0.18, 0.82, 0.36),
+                45.0,
+            );
+            spawn_ui_label(
+                commands,
+                &format!("{}/{}", castle.health.max(0), castle.max_health),
+                Vec2::new(500.0, TOP_BAR_Y + 6.0),
+                10.0,
+                TEXT_PARCHMENT,
+                46.0,
+                Anchor::CENTER_RIGHT,
+                Justify::Right,
+            );
+        }
+    } else {
+        spawn_ui_label(
+            commands,
+            "Press Enter to join",
+            Vec2::new(500.0, TOP_BAR_Y + 7.0),
+            11.0,
+            TEXT_GOLD,
+            45.0,
+            Anchor::CENTER_RIGHT,
+            Justify::Right,
+        );
+    }
+}
+
+fn spawn_resource_chip(commands: &mut Commands, pos: Vec2, label: &str, value: &str, color: Color) {
+    spawn_ui_rect(
+        commands,
+        pos,
+        Vec2::new(82.0, 20.0),
+        Color::srgba(0.02, 0.018, 0.014, 0.82),
+        44.0,
+    );
+    spawn_ui_label(
+        commands,
+        label,
+        Vec2::new(pos.x - 34.0, pos.y + 4.0),
+        8.0,
+        Color::srgb(0.57, 0.53, 0.43),
+        46.0,
+        Anchor::TOP_LEFT,
+        Justify::Left,
+    );
+    spawn_ui_label(
+        commands,
+        value,
+        Vec2::new(pos.x + 33.0, pos.y + 4.0),
+        12.0,
+        color,
+        46.0,
+        Anchor::TOP_RIGHT,
+        Justify::Right,
+    );
+}
+
+fn spawn_bottom_console(commands: &mut Commands) {
+    spawn_ui_panel(
+        commands,
+        Vec2::new(0.0, UI_PANEL_Y),
+        Vec2::new(1048.0, 188.0),
+        40.0,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(-300.0, UI_PANEL_Y + 4.0),
+        Vec2::new(4.0, 164.0),
+        PANEL_EDGE,
+        44.0,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(178.0, UI_PANEL_Y + 4.0),
+        Vec2::new(4.0, 164.0),
+        PANEL_EDGE,
+        44.0,
+    );
+}
+
+fn spawn_context_bay(
+    commands: &mut Commands,
+    details: Option<&str>,
+    race_popup_open: bool,
+    has_selection: bool,
+) {
+    if race_popup_open {
+        return;
+    }
+    let Some(details) = details.filter(|_| has_selection) else {
+        return;
+    };
+    spawn_ui_label(
+        commands,
+        "Selection",
+        Vec2::new(-274.0, UI_PANEL_Y + 58.0),
+        13.0,
+        TEXT_GOLD,
+        46.0,
+        Anchor::TOP_LEFT,
+        Justify::Left,
+    );
+    spawn_ui_label(
+        commands,
+        details,
+        Vec2::new(-274.0, UI_PANEL_Y + 32.0),
+        11.2,
+        TEXT_PARCHMENT,
+        46.0,
+        Anchor::TOP_LEFT,
+        Justify::Left,
+    );
+}
+
+fn spawn_command_card(
+    commands: &mut Commands,
+    balance: &BalanceConfig,
+    building_icons: &BuildingIconAssets,
+    state: &SnapshotState,
+    net: &ClientNet,
+    race: RaceKind,
+    selected_kind: Option<BuildingKind>,
+    hovered_kind: Option<BuildingKind>,
+) {
+    let local_gold = local_gold(state, net);
+    for (idx, kind) in balance.race(race).buildings.iter().enumerate() {
+        let config = balance.building(*kind);
+        let center = command_button_center(idx);
+        let selected = selected_kind == Some(*kind);
+        let hovered = hovered_kind == Some(*kind);
+        let affordable = local_gold.is_none_or(|gold| gold >= config.cost);
+        let color = match (affordable, hovered) {
+            (false, _) => Color::srgba(0.045, 0.040, 0.038, 0.96),
+            (true, true) => Color::srgba(0.24, 0.19, 0.10, 0.98),
+            (true, false) => Color::srgba(0.08, 0.07, 0.055, 0.96),
+        };
+        spawn_ui_button(commands, center, Vec2::splat(54.0), color, selected);
+        spawn_ui_image(
+            commands,
+            building_icon_handle(building_icons, *kind),
+            center,
+            Vec2::splat(if hovered { 50.0 } else { 46.0 }),
+            if affordable { 46.2 } else { 45.8 },
+        );
+        if !affordable {
+            spawn_ui_rect(
+                commands,
+                center,
+                Vec2::splat(48.0),
+                Color::srgba(0.28, 0.02, 0.02, 0.36),
+                47.0,
+            );
+        }
+        if let Some(unit_kind) = config.spawned_unit {
+            let unit = balance.unit(unit_kind);
+            spawn_ui_rect(
+                commands,
+                Vec2::new(center.x - 14.0, center.y + 15.0),
+                Vec2::new(18.0, 6.0),
+                attack_type_color(unit.attack_type),
+                47.0,
+            );
+            spawn_ui_rect(
+                commands,
+                Vec2::new(center.x + 14.0, center.y + 15.0),
+                Vec2::new(18.0, 6.0),
+                armor_type_color(unit.armor_type),
+                47.0,
+            );
+        }
+        spawn_ui_label(
+            commands,
+            &command_button_badge(balance, *kind),
+            Vec2::new(center.x, center.y - 18.0),
+            8.2,
+            if affordable {
+                Color::srgb(0.98, 0.90, 0.66)
+            } else {
+                Color::srgb(0.82, 0.34, 0.28)
+            },
+            48.0,
+            Anchor::CENTER,
+            Justify::Center,
+        );
+    }
+    let cancel_center = command_button_center(8);
+    spawn_ui_button(
+        commands,
+        cancel_center,
+        Vec2::splat(54.0),
+        Color::srgba(0.055, 0.050, 0.045, 0.92),
+        selected_kind.is_none(),
+    );
+    spawn_ui_label(
+        commands,
+        "X",
+        Vec2::new(cancel_center.x, cancel_center.y + 4.0),
+        22.0,
+        Color::srgb(0.55, 0.48, 0.38),
+        47.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+    spawn_ui_label(
+        commands,
+        "ESC",
+        Vec2::new(cancel_center.x, cancel_center.y - 18.0),
+        8.0,
+        Color::srgb(0.58, 0.54, 0.46),
+        47.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+}
+
 fn format_match_time(secs: f32) -> String {
     let secs = secs.max(0.0).floor() as u32;
     format!("{}:{:02}", secs / 60, secs % 60)
@@ -1521,8 +1703,8 @@ fn command_button_center(idx: usize) -> Vec2 {
     let col = idx % 3;
     let row = idx / 3;
     Vec2::new(
-        252.0 + col as f32 * 58.0,
-        UI_PANEL_Y + 41.0 - row as f32 * 58.0,
+        COMMAND_GRID_ORIGIN.x + col as f32 * 58.0,
+        COMMAND_GRID_ORIGIN.y - row as f32 * 50.0,
     )
 }
 
@@ -1585,24 +1767,6 @@ fn pick_world_object(
     None
 }
 
-fn inspected_building<'a>(
-    snapshot: &'a MatchSnapshot,
-    world_selection: &WorldSelection,
-    world_hover: &WorldHover,
-    viewer_team: Option<Team>,
-) -> Option<&'a Building> {
-    let building_id = match world_hover.hovered {
-        Some(SelectedObject::Building(id)) => Some(id),
-        _ => match world_selection.selected {
-            Some(SelectedObject::Building(id)) => Some(id),
-            _ => None,
-        },
-    }?;
-    snapshot.buildings.iter().find(|building| {
-        building.id == building_id && is_building_visible(snapshot, viewer_team, building)
-    })
-}
-
 fn selected_object_details(
     state: &SnapshotState,
     selection: &WorldSelection,
@@ -1634,7 +1798,49 @@ fn selected_object_details(
                 config.bounty
             ))
         }
-        SelectedObject::Building(_) => None,
+        SelectedObject::Building(id) => {
+            let building = snapshot
+                .buildings
+                .iter()
+                .find(|building| building.id == id)?;
+            if !is_building_visible(snapshot, viewer_team, building) {
+                return None;
+            }
+            let config = balance.building(building.kind);
+            if let Some(unit_kind) = config.spawned_unit {
+                let unit = balance.unit(unit_kind);
+                Some(format!(
+                    "{} {:?} {:?} {:?}\nHP {}/{}   Next {} in {:.1}s\nProduces: {}  HP {}\nDamage {} {}   Armor {}\nMv {:.1}   AtkR {:.1}   AS {:.2}/s",
+                    config.name,
+                    building.owner,
+                    building.lane,
+                    building.zone,
+                    building.health.max(0),
+                    building.max_health,
+                    unit.name,
+                    building.spawn_timer.max(0.0),
+                    unit.name,
+                    unit.max_health,
+                    damage_range_text(unit.damage, unit.damage_variance),
+                    unit.attack_type.label(),
+                    unit.armor_type.label(),
+                    unit.speed,
+                    unit.attack_range,
+                    attacks_per_second(unit.attack_interval),
+                ))
+            } else {
+                Some(format!(
+                    "{} {:?} {:?} {:?}\nHP {}/{}   Economy building\nIncome +{} every income tick\nProduces no unit wave.",
+                    config.name,
+                    building.owner,
+                    building.lane,
+                    building.zone,
+                    building.health.max(0),
+                    building.max_health,
+                    config.income_bonus
+                ))
+            }
+        }
         SelectedObject::Castle(team) => {
             if !is_castle_visible(snapshot, viewer_team, team) {
                 return None;
@@ -1744,143 +1950,6 @@ fn building_tooltip_text(balance: &BalanceConfig, kind: BuildingKind) -> String 
             config.name, config.cost, config.income_bonus
         )
     }
-}
-
-fn spawn_building_inspector(
-    commands: &mut Commands,
-    balance: &BalanceConfig,
-    building_icons: &BuildingIconAssets,
-    unit_assets: &UnitSpriteAssets,
-    building: &Building,
-) {
-    let panel_pos = Vec2::new(352.0, UI_PANEL_Y + 20.0);
-    spawn_ui_panel(commands, panel_pos, Vec2::new(318.0, 116.0), 43.0);
-
-    let config = balance.building(building.kind);
-    spawn_ui_image(
-        commands,
-        building_icon_handle(building_icons, building.kind),
-        Vec2::new(228.0, UI_PANEL_Y + 22.0),
-        Vec2::splat(58.0),
-        48.0,
-    );
-    spawn_ui_label(
-        commands,
-        &format!(
-            "{}  {:?} {:?} {:?}",
-            config.name, building.owner, building.lane, building.zone
-        ),
-        Vec2::new(270.0, UI_PANEL_Y + 58.0),
-        13.0,
-        TEXT_GOLD,
-        48.0,
-        Anchor::TOP_LEFT,
-        Justify::Left,
-    );
-
-    if let Some(unit_kind) = config.spawned_unit {
-        let unit = balance.unit(unit_kind);
-        spawn_ui_image(
-            commands,
-            unit_sprite_handle(unit_assets, unit_kind),
-            Vec2::new(468.0, UI_PANEL_Y + 19.0),
-            Vec2::splat(58.0),
-            48.0,
-        );
-        spawn_ui_label(
-            commands,
-            &format!(
-                "Next {} in {:.1}s",
-                unit.name,
-                building.spawn_timer.max(0.0)
-            ),
-            Vec2::new(270.0, UI_PANEL_Y + 38.0),
-            11.0,
-            TEXT_PARCHMENT,
-            48.0,
-            Anchor::TOP_LEFT,
-            Justify::Left,
-        );
-        if let Some(interval) = config.spawn_interval {
-            let pct = (1.0 - building.spawn_timer.max(0.0) / interval.max(0.01)).clamp(0.0, 1.0);
-            let width = 188.0;
-            spawn_ui_rect(
-                commands,
-                Vec2::new(364.0, UI_PANEL_Y + 23.0),
-                Vec2::new(width, 6.0),
-                Color::srgba(0.04, 0.03, 0.02, 0.86),
-                48.0,
-            );
-            spawn_ui_rect(
-                commands,
-                Vec2::new(364.0 - width * (1.0 - pct) * 0.5, UI_PANEL_Y + 23.0),
-                Vec2::new(width * pct, 6.0),
-                TEXT_GOLD,
-                49.0,
-            );
-        }
-        spawn_building_health_bar(commands, building, Vec2::new(364.0, UI_PANEL_Y + 14.0));
-        spawn_ui_label(
-            commands,
-            &format!(
-                "Building HP {}/{}\n{} {}  HP {}\n{} {} dmg  Armor {}\nMv {:.1}  AtkR {:.1}  AS {:.2}/s  {}g",
-                building.health.max(0),
-                building.max_health,
-                unit.attack_mode.label(),
-                unit.attack_type.label(),
-                unit.max_health,
-                unit.name,
-                damage_range_text(unit.damage, unit.damage_variance),
-                unit.armor_type.label(),
-                unit.speed,
-                unit.attack_range,
-                attacks_per_second(unit.attack_interval),
-                unit.bounty
-            ),
-            Vec2::new(270.0, UI_PANEL_Y + 10.0),
-            9.6,
-            Color::srgb(0.88, 0.82, 0.64),
-            48.0,
-            Anchor::TOP_LEFT,
-            Justify::Left,
-        );
-    } else {
-        spawn_building_health_bar(commands, building, Vec2::new(364.0, UI_PANEL_Y + 16.0));
-        spawn_ui_label(
-            commands,
-            &format!(
-                "Building HP {}/{}\nEconomy building\nIncome +{} every income tick\nProduces no unit wave.",
-                building.health.max(0),
-                building.max_health,
-                config.income_bonus
-            ),
-            Vec2::new(270.0, UI_PANEL_Y + 34.0),
-            11.0,
-            TEXT_PARCHMENT,
-            48.0,
-            Anchor::TOP_LEFT,
-            Justify::Left,
-        );
-    }
-}
-
-fn spawn_building_health_bar(commands: &mut Commands, building: &Building, pos: Vec2) {
-    let width = 188.0;
-    let pct = (building.health.max(0) as f32 / building.max_health.max(1) as f32).clamp(0.0, 1.0);
-    spawn_ui_rect(
-        commands,
-        pos,
-        Vec2::new(width, 5.0),
-        Color::srgba(0.04, 0.03, 0.02, 0.86),
-        48.0,
-    );
-    spawn_ui_rect(
-        commands,
-        Vec2::new(pos.x - width * (1.0 - pct) * 0.5, pos.y),
-        Vec2::new(width * pct, 5.0),
-        Color::srgb(0.18, 0.82, 0.36),
-        49.0,
-    );
 }
 
 fn spawn_race_selection_popup(
@@ -2026,6 +2095,7 @@ fn race_accent_color(race: RaceKind) -> Color {
 fn spawn_minimap(
     commands: &mut Commands,
     snapshot: &MatchSnapshot,
+    fog: &FogMemory,
     viewer_team: Option<Team>,
     camera: Option<(&Transform, &Projection)>,
     window: Option<&Window>,
@@ -2043,6 +2113,13 @@ fn spawn_minimap(
         Color::srgba(0.025, 0.028, 0.022, 0.96),
         50.0,
     );
+    spawn_ui_rect(
+        commands,
+        MINIMAP_CENTER,
+        MINIMAP_SIZE - Vec2::new(10.0, 10.0),
+        Color::srgba(0.16, 0.30, 0.12, 0.35),
+        50.5,
+    );
     for lane in Lane::ALL {
         let lane_pos = minimap_world_to_ui(Vec2::new(0.0, lane_world_y(lane)));
         spawn_ui_rect(
@@ -2053,6 +2130,7 @@ fn spawn_minimap(
             51.0,
         );
     }
+    spawn_minimap_fog(commands, snapshot, fog, viewer_team);
 
     for castle in &snapshot.castles {
         if !is_castle_visible(snapshot, viewer_team, castle.team) {
@@ -2069,6 +2147,21 @@ fn spawn_minimap(
     }
     for building in &snapshot.buildings {
         if !is_building_visible(snapshot, viewer_team, building) {
+            if is_enemy_building_scouted(snapshot, fog, viewer_team, building) {
+                let pos = minimap_world_to_ui(cell_to_world(
+                    building.owner,
+                    building.lane,
+                    building.zone,
+                    building.cell,
+                ));
+                spawn_ui_rect(
+                    commands,
+                    pos,
+                    Vec2::splat(4.0),
+                    Color::srgba(0.63, 0.59, 0.48, 0.46),
+                    53.0,
+                );
+            }
             continue;
         }
         let pos = minimap_world_to_ui(cell_to_world(
@@ -2133,6 +2226,59 @@ fn spawn_minimap(
             TEXT_GOLD,
             57.0,
         );
+        spawn_ui_rect(
+            commands,
+            Vec2::new(center.x - size.x * 0.5, center.y),
+            Vec2::new(2.0, size.y),
+            TEXT_GOLD,
+            57.0,
+        );
+        spawn_ui_rect(
+            commands,
+            Vec2::new(center.x + size.x * 0.5, center.y),
+            Vec2::new(2.0, size.y),
+            TEXT_GOLD,
+            57.0,
+        );
+    }
+}
+
+fn spawn_minimap_fog(
+    commands: &mut Commands,
+    snapshot: &MatchSnapshot,
+    fog: &FogMemory,
+    viewer_team: Option<Team>,
+) {
+    let Some(team) = viewer_team else {
+        return;
+    };
+    let tile_size = Vec2::new(
+        MINIMAP_SIZE.x / FOG_COLUMNS as f32 + 0.5,
+        MINIMAP_SIZE.y / FOG_ROWS as f32 + 0.5,
+    );
+    for row in 0..FOG_ROWS {
+        for col in 0..FOG_COLUMNS {
+            let world = fog_cell_center(col, row);
+            let reveal = world_reveal_strength(snapshot, team, world);
+            let explored = fog.explored[fog_index(col, row)];
+            let alpha = if reveal > 0.0 {
+                0.28 * (1.0 - reveal)
+            } else if explored {
+                0.42
+            } else {
+                0.82
+            };
+            if alpha <= 0.02 {
+                continue;
+            }
+            spawn_ui_rect(
+                commands,
+                minimap_world_to_ui(world),
+                tile_size,
+                Color::srgba(0.0, 0.0, 0.0, alpha),
+                52.0,
+            );
+        }
     }
 }
 
@@ -2180,13 +2326,48 @@ fn infer_attacker<'a>(
         .map(|unit| {
             let unit_config = balance.unit(unit.kind);
             let pos = unit_world_pos(unit);
-            let lane_distance = (unit.lane_pos - world_to_lane(target_pos.x)).abs();
-            let score = pos.distance(target_pos) + lane_distance * 3.0;
+            let score = pos.distance(target_pos);
             (unit, score, unit_config.attack_range + 3.5)
         })
         .filter(|(_, score, range)| *score <= range * 9.0)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(unit, _, _)| unit)
+}
+
+fn building_hit_pos(building: &Building) -> Vec2 {
+    cell_to_world(building.owner, building.lane, building.zone, building.cell)
+        + Vec2::new(0.0, 14.0)
+}
+
+fn spawn_structure_impact(
+    commands: &mut Commands,
+    target: Vec2,
+    damage: i32,
+    source: Vec2,
+    attack_type: AttackType,
+) {
+    spawn_combat_impact(commands, target, damage, source, attack_type, false);
+    let debris_color = Color::srgb(0.74, 0.56, 0.34);
+    for (idx, offset) in [
+        Vec2::new(-13.0, -5.0),
+        Vec2::new(15.0, -2.0),
+        Vec2::new(-3.0, 10.0),
+        Vec2::new(8.0, 6.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        commands.spawn((
+            Sprite::from_color(debris_color.with_alpha(0.82), Vec2::new(8.0, 3.0)),
+            Transform::from_xyz(target.x + offset.x, target.y + offset.y, VFX_Z + 2.0)
+                .with_rotation(Quat::from_rotation_z(idx as f32 * 0.78)),
+            CombatVfx {
+                lifetime: 0.42,
+                max_lifetime: 0.42,
+                velocity: Vec2::new(offset.x * 0.55, 22.0 + offset.y.abs()),
+            },
+        ));
+    }
 }
 
 fn spawn_combat_impact(
@@ -2484,12 +2665,15 @@ fn unit_sprite_size(kind: UnitKind) -> Vec2 {
 }
 
 fn unit_world_pos(unit: &Unit) -> Vec2 {
-    let x = lane_to_world(unit.lane_pos);
-    Vec2::new(x, lane_world_y(unit.lane))
+    sim_pos_to_world(unit.pos)
 }
 
 fn castle_world_pos(team: Team) -> Vec2 {
     Vec2::new(lane_to_world(team.castle_pos()), LANE_Y + 8.0)
+}
+
+fn sim_pos_to_world(pos: castle_lanes::sim::WorldPos) -> Vec2 {
+    Vec2::new(lane_to_world(pos.x), pos.y * SIM_Y_TO_WORLD)
 }
 
 fn is_unit_visible(snapshot: &MatchSnapshot, viewer_team: Option<Team>, unit: &Unit) -> bool {
@@ -2525,46 +2709,137 @@ fn is_world_revealed(snapshot: &MatchSnapshot, viewer_team: Option<Team>, pos: V
     let Some(team) = viewer_team else {
         return true;
     };
-
-    // The player's castle is a permanent reveal source around the home base.
-    if pos.distance(castle_world_pos(team)) <= REVEAL_CASTLE_RADIUS {
-        return true;
-    }
-
-    snapshot.buildings.iter().any(|building| {
-        building.owner == team
-            && pos.distance(cell_to_world(
-                building.owner,
-                building.lane,
-                building.zone,
-                building.cell,
-            )) <= REVEAL_BUILDING_RADIUS
-    }) || snapshot
-        .units
-        .iter()
-        .any(|unit| unit.owner == team && pos.distance(unit_world_pos(unit)) <= REVEAL_UNIT_RADIUS)
+    world_reveal_strength(snapshot, team, pos) > 0.08
 }
 
-fn spawn_fog_of_war(commands: &mut Commands, snapshot: &MatchSnapshot, viewer_team: Option<Team>) {
+fn world_reveal_strength(snapshot: &MatchSnapshot, team: Team, pos: Vec2) -> f32 {
+    let castle_strength =
+        reveal_strength(pos.distance(castle_world_pos(team)), REVEAL_CASTLE_RADIUS);
+    let building_strength = snapshot
+        .buildings
+        .iter()
+        .filter(|building| building.owner == team)
+        .map(|building| {
+            reveal_strength(
+                pos.distance(cell_to_world(
+                    building.owner,
+                    building.lane,
+                    building.zone,
+                    building.cell,
+                )),
+                REVEAL_BUILDING_RADIUS,
+            )
+        })
+        .fold(0.0, f32::max);
+    let unit_strength = snapshot
+        .units
+        .iter()
+        .filter(|unit| unit.owner == team)
+        .map(|unit| reveal_strength(pos.distance(unit_world_pos(unit)), REVEAL_UNIT_RADIUS))
+        .fold(0.0, f32::max);
+    castle_strength.max(building_strength).max(unit_strength)
+}
+
+fn reveal_strength(distance: f32, radius: f32) -> f32 {
+    if distance >= radius {
+        0.0
+    } else if distance <= radius - FOG_SOFT_EDGE {
+        1.0
+    } else {
+        ((radius - distance) / FOG_SOFT_EDGE).clamp(0.0, 1.0)
+    }
+}
+
+fn is_enemy_building_scouted(
+    snapshot: &MatchSnapshot,
+    fog: &FogMemory,
+    viewer_team: Option<Team>,
+    building: &Building,
+) -> bool {
+    let Some(team) = viewer_team else {
+        return false;
+    };
+    if building.owner == team {
+        return false;
+    }
+    let pos = cell_to_world(building.owner, building.lane, building.zone, building.cell);
+    !is_world_revealed(snapshot, viewer_team, pos) && fog_is_explored(fog, viewer_team, pos)
+}
+
+fn fog_is_explored(fog: &FogMemory, viewer_team: Option<Team>, pos: Vec2) -> bool {
+    let Some(team) = viewer_team else {
+        return true;
+    };
+    if fog.team != Some(team) {
+        return false;
+    }
+    let Some((col, row)) = fog_cell(pos) else {
+        return false;
+    };
+    fog.explored[fog_index(col, row)]
+}
+
+fn fog_index(col: usize, row: usize) -> usize {
+    row * FOG_COLUMNS + col
+}
+
+fn fog_cell(pos: Vec2) -> Option<(usize, usize)> {
+    let x = ((pos.x + MAP_W * 0.5) / MAP_W * FOG_COLUMNS as f32).floor() as isize;
+    let y = ((pos.y + MAP_H * 0.5) / MAP_H * FOG_ROWS as f32).floor() as isize;
+    if x < 0 || y < 0 || x >= FOG_COLUMNS as isize || y >= FOG_ROWS as isize {
+        return None;
+    }
+    Some((x as usize, y as usize))
+}
+
+fn fog_cell_center(col: usize, row: usize) -> Vec2 {
+    let tile_w = MAP_W / FOG_COLUMNS as f32;
+    let tile_h = MAP_H / FOG_ROWS as f32;
+    Vec2::new(
+        -MAP_W * 0.5 + tile_w * (col as f32 + 0.5),
+        -MAP_H * 0.5 + tile_h * (row as f32 + 0.5),
+    )
+}
+
+fn spawn_fog_of_war(
+    commands: &mut Commands,
+    snapshot: &MatchSnapshot,
+    fog: &FogMemory,
+    viewer_team: Option<Team>,
+) {
     if viewer_team.is_none() {
         return;
     }
-    let columns = 72;
-    let rows = 28;
-    let tile_w = MAP_W / columns as f32;
-    let tile_h = MAP_H / rows as f32;
-    for col in 0..columns {
-        let x = -MAP_W * 0.5 + tile_w * (col as f32 + 0.5);
-        for row in 0..rows {
-            let y = -MAP_H * 0.5 + tile_h * (row as f32 + 0.5);
-            if is_world_revealed(snapshot, viewer_team, Vec2::new(x, y)) {
+    let Some(team) = viewer_team else {
+        return;
+    };
+    let tile_w = MAP_W / FOG_COLUMNS as f32;
+    let tile_h = MAP_H / FOG_ROWS as f32;
+    for col in 0..FOG_COLUMNS {
+        for row in 0..FOG_ROWS {
+            let pos = fog_cell_center(col, row);
+            let reveal = world_reveal_strength(snapshot, team, pos);
+            let explored = fog.explored[fog_index(col, row)];
+            let alpha = if reveal > 0.0 {
+                0.20 * (1.0 - reveal)
+            } else if explored {
+                0.53
+            } else {
+                0.88
+            };
+            if alpha <= 0.015 {
                 continue;
             }
+            let tint = if explored {
+                Color::srgba(0.006, 0.009, 0.012, alpha)
+            } else {
+                Color::srgba(0.002, 0.002, 0.003, alpha)
+            };
             spawn_rect(
                 commands,
-                Vec2::new(x, y),
+                pos,
                 Vec2::new(tile_w + 1.0, tile_h + 1.0),
-                Color::srgba(0.005, 0.006, 0.006, 0.80),
+                tint,
                 18.0,
             );
         }
@@ -2576,10 +2851,6 @@ fn lane_world_y(lane: Lane) -> f32 {
         Lane::Top => 128.0,
         Lane::Bottom => -128.0,
     }
-}
-
-fn world_to_lane(x: f32) -> f32 {
-    ((x / (WORLD_W - 120.0)) + 0.5) * LANE_LENGTH
 }
 
 fn ui_summary(state: &SnapshotState, net: &ClientNet) -> (String, String, String) {
@@ -2636,18 +2907,29 @@ fn ui_summary(state: &SnapshotState, net: &ClientNet) -> (String, String, String
     (phase_line, economy_line, truncate_text(&message, 94))
 }
 
-fn local_player_title(state: &SnapshotState, net: &ClientNet) -> String {
-    let Some(snapshot) = &state.snapshot else {
-        return "Commander: not joined".to_string();
-    };
-    let Some(player_id) = net.player_id else {
-        return "Commander: not joined".to_string();
-    };
-    let Some(player) = current_player(snapshot, player_id) else {
-        return "Commander: connecting".to_string();
-    };
-    let ready = if player.ready { "ready" } else { "not ready" };
-    format!("{}  {:?}  {}", player.name, player.team, ready)
+fn local_gold(state: &SnapshotState, net: &ClientNet) -> Option<i32> {
+    let snapshot = state.snapshot.as_ref()?;
+    let player_id = net.player_id?;
+    let player = current_player(snapshot, player_id)?;
+    Some(snapshot.economies[player.team.slot()].gold)
+}
+
+fn spawn_value_bar(commands: &mut Commands, pos: Vec2, size: Vec2, pct: f32, color: Color, z: f32) {
+    let pct = pct.clamp(0.0, 1.0);
+    spawn_ui_rect(
+        commands,
+        pos,
+        size,
+        Color::srgba(0.035, 0.028, 0.020, 0.92),
+        z,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x - size.x * (1.0 - pct) * 0.5, pos.y),
+        Vec2::new(size.x * pct, size.y),
+        color,
+        z + 1.0,
+    );
 }
 
 fn truncate_text(value: &str, max_chars: usize) -> String {
@@ -2883,6 +3165,31 @@ fn spawn_building(
     ));
 }
 
+fn spawn_building_silhouette(commands: &mut Commands, building: &Building) {
+    let pos = cell_to_world(building.owner, building.lane, building.zone, building.cell);
+    spawn_rect(
+        commands,
+        Vec2::new(pos.x, pos.y - 7.0),
+        Vec2::new(CELL - 7.0, CELL - 7.0),
+        Color::srgba(0.015, 0.014, 0.013, 0.50),
+        2.7,
+    );
+    spawn_rect(
+        commands,
+        Vec2::new(pos.x, pos.y + 2.0),
+        Vec2::new(CELL - 13.0, CELL - 13.0),
+        Color::srgba(0.42, 0.38, 0.30, 0.24),
+        3.0,
+    );
+    spawn_rect(
+        commands,
+        Vec2::new(pos.x, pos.y + 14.0),
+        Vec2::new(CELL - 18.0, 3.0),
+        Color::srgba(0.72, 0.66, 0.48, 0.18),
+        3.2,
+    );
+}
+
 fn spawn_castle(
     commands: &mut Commands,
     castle: &SimCastle,
@@ -3022,7 +3329,14 @@ fn spawn_diamond(commands: &mut Commands, pos: Vec2, size: Vec2, color: Color, z
 }
 
 fn spawn_ui_panel(commands: &mut Commands, pos: Vec2, size: Vec2, z: f32) {
-    spawn_ui_rect(commands, pos, size, PANEL_BG, z);
+    spawn_ui_rect(
+        commands,
+        pos,
+        size,
+        Color::srgba(0.025, 0.020, 0.016, 0.96),
+        z,
+    );
+    spawn_ui_rect(commands, pos, size - Vec2::splat(8.0), PANEL_BG, z + 0.2);
     spawn_ui_rect(
         commands,
         Vec2::new(pos.x, pos.y + size.y * 0.5 - 2.0),
@@ -3037,6 +3351,34 @@ fn spawn_ui_panel(commands: &mut Commands, pos: Vec2, size: Vec2, z: f32) {
         Color::srgba(0.18, 0.12, 0.07, 0.96),
         z + 1.0,
     );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x - size.x * 0.5 + 2.0, pos.y),
+        Vec2::new(4.0, size.y),
+        Color::srgba(0.18, 0.13, 0.08, 0.92),
+        z + 1.0,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x + size.x * 0.5 - 2.0, pos.y),
+        Vec2::new(4.0, size.y),
+        Color::srgba(0.36, 0.25, 0.12, 0.92),
+        z + 1.0,
+    );
+    for dx in [-1.0, 1.0] {
+        for dy in [-1.0, 1.0] {
+            spawn_ui_rect(
+                commands,
+                Vec2::new(
+                    pos.x + dx * (size.x * 0.5 - 8.0),
+                    pos.y + dy * (size.y * 0.5 - 8.0),
+                ),
+                Vec2::splat(10.0),
+                Color::srgba(0.72, 0.52, 0.24, 0.86),
+                z + 2.0,
+            );
+        }
+    }
 }
 
 fn spawn_ui_button(commands: &mut Commands, pos: Vec2, size: Vec2, color: Color, selected: bool) {
@@ -3059,6 +3401,13 @@ fn spawn_ui_button_layer(
         z,
     );
     spawn_ui_rect(commands, pos, size - Vec2::splat(5.0), color, z + 1.0);
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x, pos.y + size.y * 0.5 - 8.0),
+        Vec2::new(size.x - 10.0, 2.0),
+        Color::srgba(0.95, 0.72, 0.32, 0.16),
+        z + 2.0,
+    );
     let edge = if selected {
         TEXT_GOLD
     } else {

@@ -41,7 +41,7 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `1`-`8`: select one of your race's buildings.
 - Click the 3x3 command card in the bottom command frame for mouse-first play.
 - `Esc` or the `X` command-card slot cancels building placement.
-- Left click your highlighted build grid to place the selected building while placement mode is active.
+- Left click your highlighted build grid to place the selected building while placement mode is active. A successful placement clears the build cursor.
 - Left click a unit, building, castle, or build cell to inspect it in the command frame.
 - Arrow keys: pan the camera.
 - `+`, `-`: zoom the camera.
@@ -61,7 +61,16 @@ Tune races, castle HP, economy timing/interest, building costs, spawn timers, in
 config/balance.json
 ```
 
-The dedicated server loads this file at startup and includes the active balance in replicated snapshots so clients display the server's names/costs.
+The dedicated server loads this file at startup. Clients receive the active balance once during join, then regular match snapshots only carry live match state.
+
+## Core Direction
+
+- Native desktop is the current target. Browser support is possible later, but the game work is focused on the native Bevy client and dedicated server first.
+- The game should feel like a classic RTS custom-map autobattler, but with original races, units, buildings, art, and naming.
+- We chose a 2.5D direction instead of jumping to full 3D. The simulation now moves toward real spatial RTS behavior while the renderer keeps the readable isometric-ish 2D style.
+- The server stays authoritative. Clients send player intents only; health, economy, spawns, movement, collision, combat, bounties, victory, and rematch state belong to the server.
+- Lanes remain a strategic concept, but units now have real 2D simulation positions, velocity, and radius. This lets us add spacing, body blocking, better combat readability, and future pathing without rewriting the entire game into 3D.
+- Fog of war uses client-side explored memory for presentation, while current visibility still comes from the replicated server snapshot and local reveal rules.
 
 ## Art
 
@@ -87,11 +96,12 @@ See [docs/assets.md](docs/assets.md) for the asset creation pipeline, prompt sha
 - The battlefield has two lanes: Top and Bottom. Buildings are placed into lane-specific Front or Back zones.
 - Unit-producing buildings spawn units from their own lane and grid position, so top buildings feed the top lane and bottom buildings feed the bottom lane.
 - Units prioritize enemy units first. Lanes are separate in the field, but connect inside castle junction zones so defenders can attack cross-lane enemies near a castle. After units, attackers target same-lane enemy Front buildings, then the enemy castle. Back buildings do not tank for the castle.
+- Units use 2.5D spatial positions with collision radius, spawn-space search, and deterministic separation so waves do not spawn or fight inside each other.
 - Units have attack and armor types. The current table is Warcraft-3-inspired: Magic is strong into Heavy and weak into Light, Pierce is strong into Light and weak into Heavy, and castles use Fortified armor.
 - Units also expose movement speed, attack speed, attack range, and attack mode (`Melee` or `Ranged`) through `config/balance.json`; the client shows these in the inspect/build UI.
 - Each unit has a configured bounty. Killing a unit awards that gold to the killer's team.
 - Unit `damage` is a midpoint, not a fixed number. `damage_variance: 0.10` means a unit with `50` damage rolls from `45` to `55` before attack/armor multipliers are applied.
-- The client renders inferred combat readability effects from server snapshots: floating high-contrast damage numbers, attack-type streaks, and hit bursts.
+- The client renders inferred combat readability effects from server snapshots: floating high-contrast damage numbers, attack-type streaks, hit bursts, structure impact chips, and bounty text.
 - Sudden death starts at 3:00. Castles take pressure damage based on the enemy's buildings and units, which helps matches resolve instead of stalling forever.
 
 The server owns all gameplay state. Clients send only join, ready, placement, and rematch intents.

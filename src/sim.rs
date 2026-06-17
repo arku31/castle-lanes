@@ -15,6 +15,13 @@ pub const SUDDEN_DEATH_START: f32 = 180.0;
 pub const DEFAULT_BALANCE_PATH: &str = "config/balance.json";
 const BOUNTY_EVENT_TTL: f32 = 0.75;
 const CASTLE_JUNCTION_RANGE: f32 = 18.0;
+const LANE_CENTER_Y: f32 = 8.0;
+const GRID_CELL_Y: f32 = 2.4;
+const LANE_SPREAD_LIMIT: f32 = 6.0;
+const UNIT_SEPARATION_PADDING: f32 = 0.08;
+const SPAWN_SEARCH_RINGS: i32 = 8;
+const BUILDING_FOOTPRINT_RADIUS: f32 = 4.6;
+const CASTLE_FOOTPRINT_RADIUS: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u8);
@@ -411,6 +418,35 @@ pub fn building_spawn_pos(team: Team, zone: BuildZone, cell: GridCell) -> f32 {
     building_lane_pos(team, zone, cell) + team.direction() * 2.0
 }
 
+pub fn lane_center_y(lane: Lane) -> f32 {
+    match lane {
+        Lane::Top => LANE_CENTER_Y,
+        Lane::Bottom => -LANE_CENTER_Y,
+    }
+}
+
+pub fn lane_position(lane: Lane, lane_pos: f32) -> WorldPos {
+    WorldPos::new(lane_pos, lane_center_y(lane))
+}
+
+pub fn building_position(team: Team, lane: Lane, zone: BuildZone, cell: GridCell) -> WorldPos {
+    let cell_y = cell.y.clamp(0, GRID_H - 1) as f32;
+    WorldPos::new(
+        building_lane_pos(team, zone, cell),
+        lane_center_y(lane) + (cell_y - (GRID_H - 1) as f32 * 0.5) * GRID_CELL_Y,
+    )
+}
+
+pub fn building_spawn_position(
+    team: Team,
+    lane: Lane,
+    zone: BuildZone,
+    cell: GridCell,
+) -> WorldPos {
+    let building = building_position(team, lane, zone, cell);
+    WorldPos::new(building.x + team.direction() * 2.0, building.y)
+}
+
 pub fn castle_junction(pos: f32) -> Option<Team> {
     if (pos - Team::Left.castle_pos()).abs() <= CASTLE_JUNCTION_RANGE {
         Some(Team::Left)
@@ -434,6 +470,26 @@ pub fn unit_lanes_connected(
         (castle_junction(attacker_pos), castle_junction(target_pos)),
         (Some(a), Some(b)) if a == b
     )
+}
+
+fn unit_combat_distance(
+    attacker_lane: Lane,
+    attacker_pos: WorldPos,
+    target_lane: Lane,
+    target_lane_pos: f32,
+    target_pos: WorldPos,
+) -> f32 {
+    if attacker_lane != target_lane
+        && unit_lanes_connected(attacker_lane, attacker_pos.x, target_lane, target_lane_pos)
+    {
+        (attacker_pos.x - target_pos.x).abs()
+    } else {
+        attacker_pos.distance(target_pos)
+    }
+}
+
+fn footprint_distance(pos: WorldPos, target: WorldPos, radius: f32) -> f32 {
+    (pos.distance(target) - radius).max(0.0)
 }
 
 fn roll_base_damage(rng_state: &mut u64, midpoint: i32, variance: f32) -> i32 {
@@ -611,6 +667,8 @@ pub struct UnitConfig {
     #[serde(alias = "range")]
     pub attack_range: f32,
     pub speed: f32,
+    #[serde(default = "default_unit_radius")]
+    pub radius: f32,
     pub attack_interval: f32,
 }
 
@@ -650,10 +708,32 @@ fn default_armor_type() -> ArmorType {
     ArmorType::Normal
 }
 
+fn default_unit_radius() -> f32 {
+    0.65
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GridCell {
     pub x: i32,
     pub y: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WorldPos {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl WorldPos {
+    pub fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+
+    pub fn distance(self, other: Self) -> f32 {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        (dx * dx + dy * dy).sqrt()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -711,6 +791,9 @@ pub struct Unit {
     pub lane: Lane,
     pub health: i32,
     pub lane_pos: f32,
+    pub pos: WorldPos,
+    pub velocity: WorldPos,
+    pub radius: f32,
     pub attack_timer: f32,
 }
 
@@ -721,6 +804,7 @@ pub struct BountyEvent {
     pub amount: i32,
     pub lane: Lane,
     pub lane_pos: f32,
+    pub pos: WorldPos,
     pub unit_kind: UnitKind,
     pub age: f32,
 }
@@ -1164,7 +1248,10 @@ impl GameSim {
         }
 
         for (owner, lane, zone, cell, kind) in spawns {
-            let max_health = self.balance.unit(kind).max_health;
+            let unit_config = self.balance.unit(kind);
+            let max_health = unit_config.max_health;
+            let radius = unit_config.radius;
+            let pos = self.free_spawn_position(owner, lane, zone, cell, radius);
             let id = self.take_id();
             self.units.push(Unit {
                 id,
@@ -1172,7 +1259,10 @@ impl GameSim {
                 kind,
                 lane,
                 health: max_health,
-                lane_pos: building_spawn_pos(owner, zone, cell),
+                lane_pos: pos.x,
+                pos,
+                velocity: WorldPos::new(0.0, 0.0),
+                radius,
                 attack_timer: 0.25,
             });
         }
@@ -1180,7 +1270,7 @@ impl GameSim {
 
     fn tick_units(&mut self, dt: f32) {
         let mut rng_state = self.rng_state;
-        let positions: HashMap<u64, (Team, Lane, f32, i32, ArmorType)> = self
+        let positions: HashMap<u64, (Team, Lane, f32, WorldPos, i32, ArmorType)> = self
             .units
             .iter()
             .map(|u| {
@@ -1190,6 +1280,7 @@ impl GameSim {
                         u.owner,
                         u.lane,
                         u.lane_pos,
+                        u.pos,
                         u.health,
                         self.balance.unit(u.kind).armor_type,
                     ),
@@ -1205,12 +1296,18 @@ impl GameSim {
             unit.attack_timer = (unit.attack_timer - dt).max(0.0);
             let unit_target = positions
                 .iter()
-                .filter(|(_, (team, lane, pos, health, _))| {
+                .filter(|(_, (team, lane, lane_pos, _, health, _))| {
                     *team != unit.owner
                         && *health > 0
-                        && unit_lanes_connected(unit.lane, unit.lane_pos, *lane, *pos)
+                        && unit_lanes_connected(unit.lane, unit.lane_pos, *lane, *lane_pos)
                 })
-                .map(|(id, (_, _, pos, _, armor))| (*id, (unit.lane_pos - *pos).abs(), *armor))
+                .map(|(id, (_, lane, lane_pos, pos, _, armor))| {
+                    (
+                        *id,
+                        unit_combat_distance(unit.lane, unit.pos, *lane, *lane_pos, *pos),
+                        *armor,
+                    )
+                })
                 .filter(|(_, distance, _)| *distance <= unit_config.attack_range)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
 
@@ -1224,17 +1321,24 @@ impl GameSim {
                         && building.health > 0
                 })
                 .map(|building| {
-                    let pos = building_lane_pos(building.owner, building.zone, building.cell);
+                    let pos = building_position(
+                        building.owner,
+                        building.lane,
+                        building.zone,
+                        building.cell,
+                    );
                     (
                         building.id,
-                        (unit.lane_pos - pos).abs(),
+                        footprint_distance(unit.pos, pos, BUILDING_FOOTPRINT_RADIUS),
                         self.balance.building(building.kind).armor_type,
                     )
                 })
                 .filter(|(_, distance, _)| *distance <= unit_config.attack_range)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
 
-            let enemy_castle_distance = (unit.lane_pos - unit.owner.opponent().castle_pos()).abs();
+            let enemy_castle_pos = lane_position(unit.lane, unit.owner.opponent().castle_pos());
+            let enemy_castle_distance =
+                footprint_distance(unit.pos, enemy_castle_pos, CASTLE_FOOTPRINT_RADIUS);
             let can_attack_castle = enemy_castle_distance <= unit_config.attack_range;
 
             if unit.attack_timer <= 0.0 {
@@ -1280,10 +1384,22 @@ impl GameSim {
             }
 
             if unit_target.is_none() && building_target.is_none() && !can_attack_castle {
-                unit.lane_pos += unit.owner.direction() * unit_config.speed * dt;
-                unit.lane_pos = unit.lane_pos.clamp(-18.0, LANE_LENGTH + 18.0);
+                let old_pos = unit.pos;
+                let max_step = unit_config.speed * dt;
+                unit.pos.x += unit.owner.direction() * max_step;
+                let lane_y = lane_center_y(unit.lane);
+                let y_delta = (lane_y - unit.pos.y).clamp(-max_step * 0.35, max_step * 0.35);
+                unit.pos.y += y_delta;
+                unit.pos.x = unit.pos.x.clamp(-18.0, LANE_LENGTH + 18.0);
+                unit.pos.y = clamp_lane_y(unit.lane, unit.pos.y);
+                unit.lane_pos = unit.pos.x;
+                unit.velocity =
+                    WorldPos::new((unit.pos.x - old_pos.x) / dt, (unit.pos.y - old_pos.y) / dt);
+            } else {
+                unit.velocity = WorldPos::new(0.0, 0.0);
             }
         }
+        self.separate_units();
         self.rng_state = rng_state;
 
         let mut bounty_awards = [0, 0];
@@ -1300,6 +1416,7 @@ impl GameSim {
                             bounty,
                             unit.lane,
                             unit.lane_pos,
+                            unit.pos,
                             unit.kind,
                         ));
                     }
@@ -1326,7 +1443,7 @@ impl GameSim {
         for (idx, bounty) in bounty_awards.into_iter().enumerate() {
             self.economies[idx].gold += bounty;
         }
-        for (team, amount, lane, lane_pos, unit_kind) in pending_bounty_events {
+        for (team, amount, lane, lane_pos, pos, unit_kind) in pending_bounty_events {
             let id = self.take_id();
             self.bounty_events.push(BountyEvent {
                 id,
@@ -1334,12 +1451,109 @@ impl GameSim {
                 amount,
                 lane,
                 lane_pos,
+                pos,
                 unit_kind,
                 age: 0.0,
             });
         }
         for (idx, damage) in castle_damage.into_iter().enumerate() {
             self.castles[idx].health = (self.castles[idx].health - damage).max(0);
+        }
+    }
+
+    fn free_spawn_position(
+        &self,
+        owner: Team,
+        lane: Lane,
+        zone: BuildZone,
+        cell: GridCell,
+        radius: f32,
+    ) -> WorldPos {
+        let base = building_spawn_position(owner, lane, zone, cell);
+        let spacing = radius * 2.0 + UNIT_SEPARATION_PADDING;
+        for ring in 0..=SPAWN_SEARCH_RINGS {
+            for side in [0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0] {
+                let candidate = WorldPos::new(
+                    (base.x + owner.direction() * spacing * ring as f32)
+                        .clamp(-18.0, LANE_LENGTH + 18.0),
+                    clamp_lane_y(lane, base.y + side * spacing),
+                );
+                if self.spawn_position_is_free(lane, candidate, radius) {
+                    return candidate;
+                }
+            }
+        }
+        WorldPos::new(
+            base.x.clamp(-18.0, LANE_LENGTH + 18.0),
+            clamp_lane_y(lane, base.y),
+        )
+    }
+
+    fn spawn_position_is_free(&self, lane: Lane, candidate: WorldPos, radius: f32) -> bool {
+        self.units
+            .iter()
+            .filter(|unit| unit.lane == lane)
+            .all(|unit| {
+                candidate.distance(unit.pos) >= radius + unit.radius + UNIT_SEPARATION_PADDING
+            })
+    }
+
+    fn separate_units(&mut self) {
+        for _ in 0..3 {
+            let mut offsets = vec![WorldPos::new(0.0, 0.0); self.units.len()];
+            for left in 0..self.units.len() {
+                for right in (left + 1)..self.units.len() {
+                    if !unit_lanes_connected(
+                        self.units[left].lane,
+                        self.units[left].lane_pos,
+                        self.units[right].lane,
+                        self.units[right].lane_pos,
+                    ) {
+                        continue;
+                    }
+                    let delta = WorldPos::new(
+                        self.units[right].pos.x - self.units[left].pos.x,
+                        self.units[right].pos.y - self.units[left].pos.y,
+                    );
+                    let distance_sq = delta.x * delta.x + delta.y * delta.y;
+                    let min_distance = self.units[left].radius
+                        + self.units[right].radius
+                        + UNIT_SEPARATION_PADDING;
+                    if distance_sq >= min_distance * min_distance {
+                        continue;
+                    }
+                    let distance = distance_sq.sqrt();
+                    let (normal_x, normal_y) = if distance > 0.001 {
+                        (delta.x / distance, delta.y / distance)
+                    } else {
+                        let dir = if self.units[left].id < self.units[right].id {
+                            -1.0
+                        } else {
+                            1.0
+                        };
+                        (0.0, dir)
+                    };
+                    let push = (min_distance - distance.max(0.001)) * 0.5;
+                    offsets[left].x -= normal_x * push;
+                    offsets[left].y -= normal_y * push;
+                    offsets[right].x += normal_x * push;
+                    offsets[right].y += normal_y * push;
+                }
+            }
+
+            let mut any = false;
+            for (unit, offset) in self.units.iter_mut().zip(offsets) {
+                if offset.x.abs() <= 0.0001 && offset.y.abs() <= 0.0001 {
+                    continue;
+                }
+                any = true;
+                unit.pos.x = (unit.pos.x + offset.x).clamp(-18.0, LANE_LENGTH + 18.0);
+                unit.pos.y = clamp_lane_y(unit.lane, unit.pos.y + offset.y);
+                unit.lane_pos = unit.pos.x;
+            }
+            if !any {
+                break;
+            }
         }
     }
 
@@ -1440,6 +1654,11 @@ fn clean_name(name: String) -> String {
     }
 }
 
+fn clamp_lane_y(lane: Lane, y: f32) -> f32 {
+    let center = lane_center_y(lane);
+    y.clamp(center - LANE_SPREAD_LIMIT, center + LANE_SPREAD_LIMIT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1462,6 +1681,39 @@ mod tests {
         cell: GridCell,
     ) -> Result<(), String> {
         sim.place_building(player, kind, Lane::Top, BuildZone::Front, cell)
+    }
+
+    fn test_unit(
+        id: u64,
+        owner: Team,
+        kind: UnitKind,
+        lane: Lane,
+        health: i32,
+        lane_pos: f32,
+        attack_timer: f32,
+    ) -> Unit {
+        Unit {
+            id,
+            owner,
+            kind,
+            lane,
+            health,
+            lane_pos,
+            pos: lane_position(lane, lane_pos),
+            velocity: WorldPos::new(0.0, 0.0),
+            radius: BalanceConfig::default().unit(kind).radius,
+            attack_timer,
+        }
+    }
+
+    fn assert_units_separated(left: &Unit, right: &Unit) {
+        let min_distance = left.radius + right.radius + UNIT_SEPARATION_PADDING - 0.001;
+        assert!(
+            left.pos.distance(right.pos) >= min_distance,
+            "units too close: distance {} min {}",
+            left.pos.distance(right.pos),
+            min_distance
+        );
     }
 
     #[test]
@@ -1625,6 +1877,55 @@ mod tests {
     }
 
     #[test]
+    fn repeated_spawns_find_nearby_free_space() {
+        let mut sim = ready_two_players();
+        let player = sim.players[0].id;
+        sim.place_building(
+            player,
+            BuildingKind::VanguardBarracks,
+            Lane::Top,
+            BuildZone::Front,
+            GridCell { x: 0, y: 2 },
+        )
+        .unwrap();
+
+        sim.buildings[0].spawn_timer = 0.0;
+        sim.tick(0.1);
+        sim.buildings[0].spawn_timer = 0.0;
+        sim.tick(0.1);
+
+        assert_eq!(sim.units.len(), 2);
+        assert_units_separated(&sim.units[0], &sim.units[1]);
+    }
+
+    #[test]
+    fn overlapping_units_are_separated_after_tick() {
+        let mut sim = ready_two_players();
+        sim.units.push(test_unit(
+            610,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            100,
+            40.0,
+            99.0,
+        ));
+        sim.units.push(test_unit(
+            611,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            100,
+            40.0,
+            99.0,
+        ));
+
+        sim.tick(0.1);
+
+        assert_units_separated(&sim.units[0], &sim.units[1]);
+    }
+
+    #[test]
     fn units_prioritize_same_lane_units_over_buildings() {
         let mut sim = ready_two_players();
         let right = sim.players[1].id;
@@ -1637,24 +1938,24 @@ mod tests {
         )
         .unwrap();
         let building_health = sim.buildings[0].health;
-        sim.units.push(Unit {
-            id: 700,
-            owner: Team::Left,
-            kind: UnitKind::VanguardGuard,
-            lane: Lane::Top,
-            health: 999,
-            lane_pos: 50.0,
-            attack_timer: 0.0,
-        });
-        sim.units.push(Unit {
-            id: 701,
-            owner: Team::Right,
-            kind: UnitKind::EmberRunner,
-            lane: Lane::Top,
-            health: 50,
-            lane_pos: 51.0,
-            attack_timer: 99.0,
-        });
+        sim.units.push(test_unit(
+            700,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            999,
+            50.0,
+            0.0,
+        ));
+        sim.units.push(test_unit(
+            701,
+            Team::Right,
+            UnitKind::EmberRunner,
+            Lane::Top,
+            50,
+            51.0,
+            99.0,
+        ));
 
         sim.tick(0.1);
 
@@ -1669,24 +1970,24 @@ mod tests {
     #[test]
     fn different_lane_units_fight_inside_castle_junction() {
         let mut sim = ready_two_players();
-        sim.units.push(Unit {
-            id: 720,
-            owner: Team::Left,
-            kind: UnitKind::VanguardGuard,
-            lane: Lane::Top,
-            health: 999,
-            lane_pos: 6.0,
-            attack_timer: 0.0,
-        });
-        sim.units.push(Unit {
-            id: 721,
-            owner: Team::Right,
-            kind: UnitKind::EmberRunner,
-            lane: Lane::Bottom,
-            health: 50,
-            lane_pos: 5.0,
-            attack_timer: 99.0,
-        });
+        sim.units.push(test_unit(
+            720,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            999,
+            6.0,
+            0.0,
+        ));
+        sim.units.push(test_unit(
+            721,
+            Team::Right,
+            UnitKind::EmberRunner,
+            Lane::Bottom,
+            50,
+            5.0,
+            99.0,
+        ));
 
         sim.tick(0.1);
 
@@ -1700,24 +2001,24 @@ mod tests {
     #[test]
     fn different_lane_units_ignore_each_other_outside_castle_junction() {
         let mut sim = ready_two_players();
-        sim.units.push(Unit {
-            id: 730,
-            owner: Team::Left,
-            kind: UnitKind::VanguardGuard,
-            lane: Lane::Top,
-            health: 999,
-            lane_pos: 50.0,
-            attack_timer: 0.0,
-        });
-        sim.units.push(Unit {
-            id: 731,
-            owner: Team::Right,
-            kind: UnitKind::EmberRunner,
-            lane: Lane::Bottom,
-            health: 50,
-            lane_pos: 51.0,
-            attack_timer: 99.0,
-        });
+        sim.units.push(test_unit(
+            730,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            999,
+            50.0,
+            0.0,
+        ));
+        sim.units.push(test_unit(
+            731,
+            Team::Right,
+            UnitKind::EmberRunner,
+            Lane::Bottom,
+            50,
+            51.0,
+            99.0,
+        ));
 
         sim.tick(0.1);
 
@@ -1752,15 +2053,15 @@ mod tests {
         let front_id = sim.buildings[0].id;
         let back_id = sim.buildings[1].id;
         let castle_health = sim.castles[Team::Right.slot()].health;
-        sim.units.push(Unit {
-            id: 710,
-            owner: Team::Left,
-            kind: UnitKind::VanguardGuard,
-            lane: Lane::Top,
-            health: 999,
-            lane_pos: building_lane_pos(Team::Right, BuildZone::Front, GridCell { x: 0, y: 0 }),
-            attack_timer: 0.0,
-        });
+        sim.units.push(test_unit(
+            710,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            999,
+            building_lane_pos(Team::Right, BuildZone::Front, GridCell { x: 0, y: 0 }),
+            0.0,
+        ));
 
         sim.tick(0.1);
 
@@ -1780,6 +2081,7 @@ mod tests {
 
         sim.buildings.retain(|building| building.id != front_id);
         sim.units[0].lane_pos = Team::Right.castle_pos() - 1.0;
+        sim.units[0].pos = lane_position(Lane::Top, sim.units[0].lane_pos);
         sim.units[0].attack_timer = 0.0;
         sim.tick(0.1);
 
@@ -1797,15 +2099,15 @@ mod tests {
         let mut sim = ready_two_players();
         let unit_config = sim.balance.unit(UnitKind::VanguardGuard);
         let castle_armor = sim.castles[Team::Right.slot()].armor_type;
-        sim.units.push(Unit {
-            id: 500,
-            owner: Team::Left,
-            kind: UnitKind::VanguardGuard,
-            lane: Lane::Top,
-            health: 999,
-            lane_pos: Team::Right.castle_pos() - 1.0,
-            attack_timer: 0.0,
-        });
+        sim.units.push(test_unit(
+            500,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            999,
+            Team::Right.castle_pos() - 1.0,
+            0.0,
+        ));
         let (min_damage, _) = damage_range(unit_config.damage, unit_config.damage_variance);
         sim.castles[Team::Right.slot()].health =
             typed_damage(min_damage, unit_config.attack_type, castle_armor);
@@ -1819,24 +2121,24 @@ mod tests {
         let mut sim = ready_two_players();
         sim.economies[Team::Left.slot()].gold = 0;
         sim.economies[Team::Right.slot()].gold = 0;
-        sim.units.push(Unit {
-            id: 500,
-            owner: Team::Left,
-            kind: UnitKind::VanguardGuard,
-            lane: Lane::Top,
-            health: 999,
-            lane_pos: 50.0,
-            attack_timer: 0.0,
-        });
-        sim.units.push(Unit {
-            id: 501,
-            owner: Team::Right,
-            kind: UnitKind::EmberRunner,
-            lane: Lane::Top,
-            health: 1,
-            lane_pos: 50.0,
-            attack_timer: 99.0,
-        });
+        sim.units.push(test_unit(
+            500,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            999,
+            50.0,
+            0.0,
+        ));
+        sim.units.push(test_unit(
+            501,
+            Team::Right,
+            UnitKind::EmberRunner,
+            Lane::Top,
+            1,
+            50.0,
+            99.0,
+        ));
 
         sim.tick(0.1);
 
@@ -1863,6 +2165,7 @@ mod tests {
             amount: 2,
             lane: Lane::Top,
             lane_pos: 50.0,
+            pos: lane_position(Lane::Top, 50.0),
             unit_kind: UnitKind::VanguardGuard,
             age: 0.0,
         });
@@ -2015,15 +2318,15 @@ mod tests {
             GridCell { x: 0, y: 0 },
         )
         .unwrap();
-        sim.units.push(Unit {
-            id: 900,
-            owner: Team::Left,
-            kind: UnitKind::VanguardGuard,
-            lane: Lane::Top,
-            health: sim.balance.unit(UnitKind::VanguardGuard).max_health,
-            lane_pos: Team::Left.spawn_pos(),
-            attack_timer: 0.0,
-        });
+        sim.units.push(test_unit(
+            900,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            sim.balance.unit(UnitKind::VanguardGuard).max_health,
+            Team::Left.spawn_pos(),
+            0.0,
+        ));
         sim.castles[Team::Left.slot()].health = 0;
         sim.castles[Team::Right.slot()].health = 0;
 
