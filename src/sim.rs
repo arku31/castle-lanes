@@ -1610,7 +1610,7 @@ impl GameSim {
         self.message = "Rematch ready. Set ready again.".to_string();
     }
 
-    fn reset_match_state(&mut self) {
+    pub fn reset_match_state(&mut self) {
         self.clear_match_entities();
         // One economy and one castle per seat; races set in the lobby pick
         // the castle HP/armor. Seats without a race get the Vanguard default

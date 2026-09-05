@@ -155,6 +155,137 @@ struct UiOverlays {
     settings: bool,
 }
 
+/// Local deterministic playback of a recorded match (plan.md Phase 3): the
+/// client re-runs the recorded seed + intents through the sim and renders
+/// the result; no server connection is used.
+#[derive(Resource)]
+struct ReplayPlayer {
+    sim: castle_lanes::sim::GameSim,
+    commands: Vec<castle_lanes::record::RecordedCommand>,
+    next_command: usize,
+    paused: bool,
+    /// Accumulated sub-tick time scaled by playback speed.
+    accumulator: f32,
+}
+
+#[derive(Resource, Default)]
+struct ReplayControls {
+    paused: bool,
+    speed: f32,
+}
+
+fn run_replay(path: std::path::PathBuf) {
+    let record = match castle_lanes::record::load_record(&path) {
+        Ok(record) => record,
+        Err(err) => {
+            eprintln!("failed to load replay {path:?}: {err}");
+            std::process::exit(1);
+        }
+    };
+    println!(
+        "Replaying {}: {} players, {} commands, {} kills, winner {:?}",
+        path.display(),
+        record.players.len(),
+        record.commands.len(),
+        record.kills.len(),
+        record.winner
+    );
+
+    let mut sim = castle_lanes::sim::GameSim::with_seed(
+        castle_lanes::sim::BalanceConfig::load_or_default(
+            castle_lanes::sim::DEFAULT_BALANCE_PATH,
+        ),
+        record.seed,
+    );
+    // Rebuild seats in recorded order so PlayerIds match the command log.
+    for player in &record.players {
+        let id = sim.join_or_update_player(player.name.clone()).unwrap().id;
+        if let Some(race) = player.race {
+            sim.set_race(id, race).unwrap();
+        }
+        sim.set_ready(id, true).unwrap();
+    }
+    sim.phase = MatchPhase::Playing;
+    sim.reset_match_state();
+    sim.phase = MatchPhase::Playing;
+
+    let player = ReplayPlayer {
+        sim,
+        commands: record
+            .commands
+            .iter()
+            .cloned()
+            .collect(),
+        next_command: 0,
+        paused: false,
+        accumulator: 0.0,
+    };
+
+    let socket = UdpSocket::bind("0.0.0.0:0").expect("bind replay socket");
+    // replay client: same window/UI/render stack, driven by the local sim
+    App::new()
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: format!(
+                            "Castle Lanes v{} - REPLAY",
+                            castle_lanes::VERSION
+                        ),
+                        resolution: WindowResolution::new(1100, 720),
+                        resizable: true,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    file_path: std::env::current_dir()
+                        .map(|cwd| {
+                            cwd.join("assets").to_string_lossy().to_string()
+                        })
+                        .unwrap_or_else(|_| "assets".to_string()),
+                    ..default()
+                }),
+        )
+        .insert_resource(ClearColor(Color::srgb(0.07, 0.08, 0.09)))
+        .insert_resource(ReplayControls::default())
+        .init_resource::<SnapshotState>()
+        .init_resource::<BuildSelection>()
+        .init_resource::<BuildHover>()
+        .init_resource::<WorldSelection>()
+        .init_resource::<WorldHover>()
+        .init_resource::<CombatTracker>()
+        .init_resource::<CameraHome>()
+        .init_resource::<FogMemory>()
+        .init_resource::<RenderInterp>()
+        .init_resource::<SceneRegistry>()
+        .init_resource::<SfxQueue>()
+        .init_resource::<UiOverlays>()
+        .init_resource::<MatchHints>()
+        .insert_resource(player)
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (
+                replay_advance,
+                replay_input,
+                camera_controls,
+                detect_combat_vfx,
+                update_world_hover,
+                sync_static_scene,
+                sync_units,
+                animate_units,
+                update_object_highlight,
+                update_fog_tiles,
+                redraw_game_ui,
+                pin_ui_to_camera,
+                animate_grass,
+                update_combat_vfx,
+            ),
+        )
+        .run();
+}
+
 #[derive(Resource, Default)]
 struct MatchHints {
     step: usize,
@@ -421,8 +552,101 @@ fn side_matches_viewer(
     }
 }
 
+/// Advance the local replay sim and publish its snapshot to the render
+/// pipeline. Space pauses, [ and ] step playback speed down/up.
+fn replay_advance(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut controls: ResMut<ReplayControls>,
+    mut player: ResMut<ReplayPlayer>,
+    mut state: ResMut<SnapshotState>,
+) {
+    if keys.just_pressed(KeyCode::KeyP) {
+        controls.paused = !controls.paused;
+    }
+    if keys.just_pressed(KeyCode::BracketLeft) {
+        controls.speed = (controls.speed - 0.5).max(0.25);
+    }
+    if keys.just_pressed(KeyCode::BracketRight) {
+        controls.speed = (controls.speed + 0.5).min(4.0);
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        std::process::exit(0);
+    }
+
+    if !controls.paused {
+        player.accumulator += time.delta_secs() * controls.speed;
+    }
+    let dt = 1.0 / 30.0;
+    let mut ticks = 0;
+    while player.accumulator >= dt && ticks < 8 * 30 {
+        player.accumulator -= dt;
+        player.sim.tick(dt);
+        ticks += 1;
+        loop {
+            let next = player.next_command;
+            let Some(command) = player.commands.get(next) else {
+                break;
+            };
+            if command.tick > player.sim.tick {
+                break;
+            }
+            let command = command.clone();
+            apply_recorded_intent(&mut player.sim, &command);
+            player.next_command += 1;
+        }
+    }
+
+    let mut snapshot = player.sim.snapshot();
+    snapshot.message = if controls.paused {
+        format!("[PAUSED {:.1}x] {}", controls.speed, snapshot.message)
+    } else {
+        format!("[{:.1}x] {}", controls.speed, snapshot.message)
+    };
+    state.snapshot = Some(snapshot);
+}
+
+fn apply_recorded_intent(
+    sim: &mut castle_lanes::sim::GameSim,
+    command: &castle_lanes::record::RecordedCommand,
+) {
+    use castle_lanes::record::RecordedIntent;
+    let player_id = PlayerId(command.player);
+    let result = match &command.intent {
+        RecordedIntent::SetRace { race } => sim.set_race(player_id, *race).map(|_| ()),
+        RecordedIntent::SetReady { ready } => sim.set_ready(player_id, *ready),
+        RecordedIntent::PlaceBuilding {
+            kind,
+            lane,
+            zone,
+            cell,
+            ..
+        } => sim.place_building(player_id, *kind, *lane, *zone, *cell),
+        RecordedIntent::SellBuilding { building_id, .. } => {
+            sim.sell_building(player_id, *building_id)
+        }
+        RecordedIntent::UpgradeBuilding { building_id, to, .. } => {
+            sim.upgrade_building(player_id, *building_id, *to)
+        }
+        RecordedIntent::Surrender => sim.surrender(player_id),
+        RecordedIntent::VoteRematch => {
+            sim.vote_rematch(player_id);
+            Ok(())
+        }
+    };
+    if let Err(err) = result {
+        eprintln!("replay command failed: {err}");
+    }
+}
+
+fn replay_input() {}
+
 fn main() {
     let options = parse_args();
+    if let Some(path) = options.replay.clone() {
+        run_replay(path);
+        return;
+    }
     let socket = UdpSocket::bind("0.0.0.0:0").expect("bind client udp socket");
     socket.set_nonblocking(true).expect("set nonblocking");
 
@@ -541,6 +765,7 @@ struct ClientOptions {
     /// Start the camera at this fraction of the battlefield (0 = left home,
     /// 1 = right home) instead of the own base; capture/spectate aid.
     camera_x: Option<f32>,
+    replay: Option<std::path::PathBuf>,
 }
 
 fn parse_args() -> ClientOptions {
@@ -550,6 +775,7 @@ fn parse_args() -> ClientOptions {
     let mut auto_build_demo = false;
     let mut auto_race = RaceKind::Vanguard;
     let mut camera_x = None;
+    let mut replay = None;
     let args: Vec<String> = env::args().collect();
     let mut legacy_json = false;
     let mut idx = 1;
@@ -591,6 +817,7 @@ fn parse_args() -> ClientOptions {
         auto_build_demo,
         auto_race,
         camera_x,
+        replay,
     }
 }
 

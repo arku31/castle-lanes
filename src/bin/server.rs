@@ -315,7 +315,7 @@ fn handle_packet(
             room.recorder.record_command(
                 &room.sim,
                 player_id.0,
-                RecordedIntent::UpgradeBuilding { to },
+                RecordedIntent::UpgradeBuilding { building_id, to },
             );
             if let Some(session) = clients.get_mut(&addr) {
                 session.last_applied_seq = seq;

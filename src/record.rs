@@ -8,12 +8,12 @@
 use crate::sim::{
     BuildZone, BuildingKind, GameSim, GridCell, Lane, MatchPhase, RaceKind, Team, UnitKind,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MatchRecord {
     pub game_id: u32,
     pub seed: u64,
@@ -26,14 +26,14 @@ pub struct MatchRecord {
     pub timeline: Vec<TimelineSample>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RecordedPlayer {
     pub name: String,
     pub team: Team,
     pub race: Option<RaceKind>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", content = "args")]
 pub enum RecordedIntent {
     SetRace {
@@ -52,13 +52,14 @@ pub enum RecordedIntent {
         building_id: u64,
     },
     UpgradeBuilding {
+        building_id: u64,
         to: BuildingKind,
     },
     Surrender,
     VoteRematch,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordedCommand {
     /// Sim tick at which the server applied the intent.
     pub tick: u64,
@@ -67,14 +68,14 @@ pub struct RecordedCommand {
     pub intent: RecordedIntent,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RecordedKill {
     pub elapsed_secs: f32,
     pub team: Team,
     pub kind: UnitKind,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TimelineSample {
     pub elapsed_secs: f32,
     pub castle_health: [i32; 2],
@@ -238,6 +239,15 @@ fn sample(sim: &GameSim) -> TimelineSample {
         unit_count,
         army_health,
     }
+}
+
+/// Load a recorded match for playback. Balance is taken from the running
+/// binary's embedded config - recordings made with a modified balance.json
+/// will diverge (recorded next to the file once configs are versioned).
+pub fn load_record(path: impl AsRef<Path>) -> std::io::Result<MatchRecord> {
+    let raw = fs::read_to_string(path.as_ref())?;
+    serde_json::from_str(&raw)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
 
 /// Write a finished record as JSON under `recordings/`; the server treats
