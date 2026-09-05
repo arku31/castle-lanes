@@ -37,6 +37,10 @@ pub enum ClientPacket {
         lane: Lane,
         zone: BuildZone,
         cell: GridCell,
+        /// Client-generated id for at-most-once application; the server
+        /// echoes it in `ServerPacket::Ack` (plan.md Phase 1 command acks).
+        #[serde(default)]
+        seq: Option<u32>,
     },
     VoteRematch {
         player_id: PlayerId,
@@ -79,6 +83,10 @@ pub enum ServerPacket {
     },
     Snapshot(MatchSnapshot),
     SnapshotDelta(SnapshotDelta),
+    Ack {
+        #[serde(default)]
+        seq: Option<u32>,
+    },
     Error {
         message: String,
     },

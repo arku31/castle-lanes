@@ -98,6 +98,7 @@ fn dedicated_server_runs_two_player_building_flow() {
             lane: Lane::Top,
             zone: BuildZone::Front,
             cell: GridCell { x: 0, y: 0 },
+            seq: None,
         },
     );
     send(
@@ -109,6 +110,7 @@ fn dedicated_server_runs_two_player_building_flow() {
             lane: Lane::Bottom,
             zone: BuildZone::Front,
             cell: GridCell { x: 0, y: 0 },
+            seq: None,
         },
     );
     let mut right_snapshot = None;

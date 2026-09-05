@@ -33,6 +33,8 @@ struct ClientSession {
     /// Enemy buildings this session has scouted; re-sent stale while the
     /// client's fog memory should still show their silhouette.
     seen_enemy_buildings: HashMap<u64, castle_lanes::sim::Building>,
+    /// Last successfully applied placement seq, for at-most-once retries.
+    last_applied_seq: Option<u32>,
 }
 
 struct GameRoom {
@@ -161,6 +163,7 @@ fn handle_packet(
                         last_seen: Instant::now(),
                         last_snapshot: None,
                         seen_enemy_buildings: HashMap::new(),
+                        last_applied_seq: None,
                     },
                 );
             };
@@ -221,9 +224,25 @@ fn handle_packet(
             lane,
             zone,
             cell,
+            seq,
         } => {
+            // At-most-once: a retry of an already-applied seq just re-acks.
+            let duplicate = seq.is_some()
+                && clients
+                    .get(&addr)
+                    .is_some_and(|session| session.last_applied_seq == seq);
+            if duplicate {
+                send_packet(socket, addr, &ServerPacket::Ack { seq })?;
+                return Ok(());
+            }
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.place_building(player_id, kind, lane, zone, cell)?;
+            if let Some(session) = clients.get_mut(&addr) {
+                session.last_applied_seq = seq;
+            }
+            if seq.is_some() {
+                send_packet(socket, addr, &ServerPacket::Ack { seq })?;
+            }
         }
         ClientPacket::VoteRematch { player_id } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;

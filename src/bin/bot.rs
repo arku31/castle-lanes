@@ -111,6 +111,7 @@ fn main() -> std::io::Result<()> {
                         };
                         apply_snapshot_delta(snapshot, delta);
                     }
+                    Ok(ServerPacket::Ack { .. }) => {}
                     Ok(ServerPacket::Error { message }) => {
                         eprintln!("Server error: {message}");
                     }
@@ -171,6 +172,7 @@ fn main() -> std::io::Result<()> {
                         lane: default_lane_for_team(player.team),
                         zone: BuildZone::Front,
                         cell: GridCell { x: 0, y: 0 },
+                        seq: None,
                     },
                 );
                 sent_building = true;

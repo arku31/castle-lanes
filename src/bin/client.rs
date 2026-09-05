@@ -61,6 +61,21 @@ struct ClientNet {
     last_join: Instant,
     last_keepalive: Instant,
     status: String,
+    next_seq: u32,
+    pending_placement: Option<PendingPlacement>,
+}
+
+/// An unacknowledged placement intent, retried until acked or expired
+/// (plan.md Phase 1 command acks).
+#[derive(Clone, Copy)]
+struct PendingPlacement {
+    seq: u32,
+    kind: BuildingKind,
+    lane: Lane,
+    zone: BuildZone,
+    cell: GridCell,
+    first_sent: Instant,
+    last_sent: Instant,
 }
 
 #[derive(Resource, Default)]
@@ -330,6 +345,8 @@ fn main() {
             last_join: Instant::now() - Duration::from_secs(3),
             last_keepalive: Instant::now(),
             status: "Press Enter to connect to the lobby server.".to_string(),
+            next_seq: 1,
+            pending_placement: None,
         })
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
@@ -576,7 +593,16 @@ fn receive_packets(
                         net.status = "Waiting for baseline snapshot.".to_string();
                     }
                 }
+                Ok(ServerPacket::Ack { seq: Some(seq) }) => {
+                    if let Some(pending) = &net.pending_placement {
+                        if pending.seq == seq {
+                            net.pending_placement = None;
+                        }
+                    }
+                }
+                Ok(ServerPacket::Ack { seq: None }) => {}
                 Ok(ServerPacket::Error { message }) => {
+                    net.pending_placement = None;
                     net.status = message;
                 }
                 Err(err) => {
@@ -705,6 +731,7 @@ fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotState>) {
             lane: default_lane_for_team(net.team.unwrap_or(Team::Left)),
             zone: BuildZone::Front,
             cell: GridCell { x: 0, y: 0 },
+            seq: None,
         },
     );
     net.sent_auto_build = true;
@@ -920,11 +947,45 @@ fn ui_mouse_input(
     }
 }
 
+const PLACEMENT_RETRY_INTERVAL: Duration = Duration::from_millis(350);
+const PLACEMENT_RETRY_WINDOW: Duration = Duration::from_millis(1500);
+
+fn retry_pending_placement(mut net: ResMut<ClientNet>) {
+    let Some(pending) = net.pending_placement else {
+        return;
+    };
+    let since_last = pending.last_sent.elapsed();
+    let since_first = pending.first_sent.elapsed();
+    if since_last < PLACEMENT_RETRY_INTERVAL {
+        return;
+    }
+    if since_first > PLACEMENT_RETRY_WINDOW {
+        net.pending_placement = None;
+        net.status = "Last placement was not acknowledged by the server.".to_string();
+        return;
+    }
+    send_client(
+        &net,
+        &ClientPacket::PlaceBuilding {
+            player_id: net.player_id.unwrap_or(PlayerId(0)),
+            kind: pending.kind,
+            lane: pending.lane,
+            zone: pending.zone,
+            cell: pending.cell,
+            seq: Some(pending.seq),
+        },
+    );
+    net.pending_placement = Some(PendingPlacement {
+        last_sent: Instant::now(),
+        ..pending
+    });
+}
+
 fn placement_input(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
-    net: Res<ClientNet>,
+    mut net: ResMut<ClientNet>,
     mut selection: ResMut<BuildSelection>,
     mut world_selection: ResMut<WorldSelection>,
     state: Res<SnapshotState>,
@@ -978,6 +1039,8 @@ fn placement_input(
         return;
     }
     sfx.push(Sfx::BuildPlace);
+    let seq = net.next_seq;
+    net.next_seq = net.next_seq.wrapping_add(1);
     send_client(
         &net,
         &ClientPacket::PlaceBuilding {
@@ -986,8 +1049,18 @@ fn placement_input(
             lane,
             zone,
             cell,
+            seq: Some(seq),
         },
     );
+    net.pending_placement = Some(PendingPlacement {
+        seq,
+        kind,
+        lane,
+        zone,
+        cell,
+        first_sent: Instant::now(),
+        last_sent: Instant::now(),
+    });
     world_selection.selected = Some(SelectedObject::Cell(team, lane, zone, cell));
     selection.kind = None;
 }
