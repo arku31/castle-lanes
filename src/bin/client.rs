@@ -361,7 +361,8 @@ fn main() {
         .init_resource::<SfxQueue>()
         .init_resource::<HelpOverlay>()
         .init_resource::<MatchHints>()
-        .insert_resource(MasterVolume::load())
+        .init_resource::<SettingsOverlay>()
+        .insert_resource(ClientSettings::load())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -750,9 +751,13 @@ fn menu_and_lobby_input(
     mut state: ResMut<SnapshotState>,
     mut help: ResMut<HelpOverlay>,
     world_selection: Res<WorldSelection>,
+    mut settings_overlay: ResMut<SettingsOverlay>,
 ) {
     if keys.just_pressed(KeyCode::KeyH) {
         help.open = !help.open;
+    }
+    if keys.just_pressed(KeyCode::KeyO) {
+        settings_overlay.open = !settings_overlay.open;
     }
     if keys.just_pressed(KeyCode::Enter) {
         if !net.connected {
@@ -1373,62 +1378,96 @@ impl SfxQueue {
     }
 }
 
-#[derive(Resource)]
-struct MasterVolume {
-    value: f32,
+/// Resolution presets for the settings panel (plan.md Phase 1 item 10).
+const RESOLUTION_PRESETS: [(f32, f32); 4] = [
+    (1280.0, 720.0),
+    (1600.0, 900.0),
+    (1920.0, 1080.0),
+    (2560.0, 1440.0),
+];
+
+#[derive(Resource, Clone)]
+struct ClientSettings {
+    master_volume: f32,
     muted: bool,
+    fullscreen: bool,
+    resolution_index: usize,
 }
 
-impl Default for MasterVolume {
+impl Default for ClientSettings {
     fn default() -> Self {
         Self {
-            value: 0.8,
+            master_volume: 0.8,
             muted: false,
+            fullscreen: false,
+            resolution_index: 2,
         }
     }
 }
 
-impl MasterVolume {
+impl ClientSettings {
     fn settings_path() -> std::path::PathBuf {
         std::path::PathBuf::from("config/client_settings.json")
     }
 
     fn load() -> Self {
-        let mut volume = Self::default();
+        let mut settings = Self::default();
         if let Ok(raw) = std::fs::read_to_string(Self::settings_path()) {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
                 if let Some(value) = parsed.get("master_volume").and_then(|v| v.as_f64()) {
-                    volume.value = (value as f32).clamp(0.0, 1.0);
+                    settings.master_volume = (value as f32).clamp(0.0, 1.0);
                 }
                 if let Some(muted) = parsed.get("muted").and_then(|v| v.as_bool()) {
-                    volume.muted = muted;
+                    settings.muted = muted;
+                }
+                if let Some(fullscreen) = parsed.get("fullscreen").and_then(|v| v.as_bool()) {
+                    settings.fullscreen = fullscreen;
+                }
+                if let Some(index) = parsed.get("resolution_index").and_then(|v| v.as_u64()) {
+                    settings.resolution_index =
+                        (index as usize).min(RESOLUTION_PRESETS.len() - 1);
                 }
             }
         }
-        volume
+        settings
     }
 
     fn save(&self) {
         let payload = serde_json::json!({
-            "master_volume": self.value,
+            "master_volume": self.master_volume,
             "muted": self.muted,
+            "fullscreen": self.fullscreen,
+            "resolution_index": self.resolution_index,
         });
         let _ = std::fs::write(Self::settings_path(), payload.to_string());
     }
 
-    fn effective(&self) -> f32 {
-        if self.muted { 0.0 } else { self.value }
+    fn effective_volume(&self) -> f32 {
+        if self.muted {
+            0.0
+        } else {
+            self.master_volume
+        }
     }
+
+    fn resolution(&self) -> (f32, f32) {
+        RESOLUTION_PRESETS[self.resolution_index.min(RESOLUTION_PRESETS.len() - 1)]
+    }
+}
+
+#[derive(Resource, Default)]
+struct SettingsOverlay {
+    open: bool,
 }
 
 fn play_sfx_queue(
     mut commands: Commands,
     mut queue: ResMut<SfxQueue>,
     assets: Res<AudioAssets>,
-    volume: Res<MasterVolume>,
+    settings: Res<ClientSettings>,
 ) {
     for sfx in queue.queue.drain(..) {
-        let gain = sfx.gain() * volume.effective();
+        let gain = sfx.gain() * settings.effective_volume();
         if gain <= 0.0 {
             continue;
         }
@@ -1439,10 +1478,63 @@ fn play_sfx_queue(
     }
 }
 
-fn volume_toggle_input(keys: Res<ButtonInput<KeyCode>>, mut volume: ResMut<MasterVolume>) {
+/// Mute toggle (V) and, while the settings overlay is open, live volume,
+/// fullscreen, and resolution controls (plan.md Phase 1 item 10).
+fn volume_toggle_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut settings: ResMut<ClientSettings>,
+    mut overlay: ResMut<SettingsOverlay>,
+    mut window_query: Query<&mut Window>,
+) {
     if keys.just_pressed(KeyCode::KeyV) {
-        volume.muted = !volume.muted;
-        volume.save();
+        settings.muted = !settings.muted;
+        settings.save();
+    }
+    if keys.just_pressed(KeyCode::KeyO) {
+        overlay.open = !overlay.open;
+    }
+    if !overlay.open {
+        return;
+    }
+
+    let mut changed = false;
+    if keys.just_pressed(KeyCode::Comma) {
+        settings.master_volume = (settings.master_volume - 0.1).clamp(0.0, 1.0);
+        changed = true;
+    }
+    if keys.just_pressed(KeyCode::Period) {
+        settings.master_volume = (settings.master_volume + 0.1).clamp(0.0, 1.0);
+        changed = true;
+    }
+    if keys.just_pressed(KeyCode::KeyM) {
+        settings.muted = !settings.muted;
+        changed = true;
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        settings.fullscreen = !settings.fullscreen;
+        changed = true;
+        if let Ok(mut window) = window_query.single_mut() {
+            window.mode = if settings.fullscreen {
+                bevy::window::WindowMode::BorderlessFullscreen(
+                    bevy::window::MonitorSelection::Current,
+                )
+            } else {
+                bevy::window::WindowMode::Windowed
+            };
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyN) {
+        settings.resolution_index = (settings.resolution_index + 1) % RESOLUTION_PRESETS.len();
+        changed = true;
+        let (width, height) = settings.resolution();
+        if let Ok(mut window) = window_query.single_mut() {
+            window.mode = bevy::window::WindowMode::Windowed;
+            window.resolution =
+                bevy::window::WindowResolution::new(width as u32, height as u32);
+        }
+    }
+    if changed {
+        settings.save();
     }
 }
 
@@ -2218,6 +2310,8 @@ fn redraw_game_ui(
     building_icons: Res<BuildingIconAssets>,
     help: Res<HelpOverlay>,
     mut hints: ResMut<MatchHints>,
+    settings_overlay: Res<SettingsOverlay>,
+    settings: Res<ClientSettings>,
 ) {
     for entity in &ui_query {
         commands.entity(entity).despawn();
@@ -2324,7 +2418,46 @@ fn redraw_game_ui(
     if help.open {
         spawn_help_overlay(&mut commands);
     }
+    if settings_overlay.open {
+        spawn_settings_overlay(&mut commands, &settings);
+    }
     spawn_match_hint(&mut commands, &state, &net, &mut hints);
+}
+
+/// Settings panel: volume, mute, fullscreen, resolution - all persisted to
+/// config/client_settings.json (plan.md Phase 1 item 10).
+fn spawn_settings_overlay(commands: &mut Commands, settings: &ClientSettings) {
+    spawn_ui_rect(
+        commands,
+        Vec2::ZERO,
+        Vec2::new(620.0, 360.0),
+        Color::srgba(0.04, 0.036, 0.03, 0.97),
+        60.0,
+    );
+    let (width, height) = settings.resolution();
+    let percent = (settings.master_volume * 100.0).round() as i32;
+    let bar = format!(
+        "[{}{}]{}{:>3}%",
+        "|".repeat((settings.master_volume * 10.0).round() as usize),
+        " ".repeat(10 - (settings.master_volume * 10.0).round() as usize),
+        if settings.muted { " MUTED" } else { "      " },
+        percent
+    );
+    spawn_ui_label(
+        commands,
+        &format!(
+            "SETTINGS                                        (O to close)\n\nMaster volume  {bar}\n       , quieter    . louder    M mute (global: V)\n\nFullscreen     {:<6}   F toggle\nResolution     {}x{}   N cycle preset\n\nSettings persist to config/client_settings.json",
+            if settings.fullscreen { "On" } else { "Off" },
+            width as i32,
+            height as i32
+        ),
+        Vec2::new(0.0, 0.0),
+        14.0,
+        TEXT_PARCHMENT,
+        61.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
 }
 
 /// First-match guidance: one short line at a time, advancing as the player
@@ -2407,7 +2540,7 @@ fn spawn_help_overlay(commands: &mut Commands) {
     spawn_ui_label(
         commands,
         &format!(
-            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nDelete sell building   R rematch   Ctrl+Q concede   H help   V mute"
+            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nDelete sell building   Delete sell   R rematch   Ctrl+Q concede   H help   O settings   V mute"
         ),
         Vec2::new(0.0, 0.0),
         13.0,
@@ -4857,5 +4990,36 @@ fn default_lane_for_team(team: Team) -> Lane {
     match team {
         Team::Left => Lane::Top,
         Team::Right => Lane::Bottom,
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn client_settings_round_trip_through_disk() {
+        let original = std::fs::read_to_string(ClientSettings::settings_path()).ok();
+
+        let mut settings = ClientSettings::default();
+        settings.master_volume = 0.55;
+        settings.muted = true;
+        settings.fullscreen = true;
+        settings.resolution_index = 1;
+        settings.save();
+
+        let loaded = ClientSettings::load();
+        assert!((loaded.master_volume - 0.55).abs() < 1e-6);
+        assert!(loaded.muted);
+        assert!(loaded.fullscreen);
+        assert_eq!(loaded.resolution_index, 1);
+
+        // restore whatever the user had (or clear our defaults)
+        match original {
+            Some(raw) => std::fs::write(ClientSettings::settings_path(), raw).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(ClientSettings::settings_path());
+            }
+        }
     }
 }
