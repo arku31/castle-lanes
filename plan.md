@@ -8,9 +8,12 @@ Phase 1 progress:
 - [x] Server-side fog/interest management — clients only receive entities their side can see (`position_revealed_to` in sim.rs, `filter_snapshot_for_viewer` in net.rs, per-session scouted-building sets on the server)
 - [x] Reconnect grace — disconnect no longer resets a live match; 90s seat reservation with server-side expiry
 - [x] Surrender — Ctrl+Q concedes; castle falls, normal victory path
-- [x] Command acks — placements carry a seq, retried 350ms/1.5s, server dedupes at-most-once
+- [x] Command acks — placements/sells carry a seq, retried 350ms/1.5s, server dedupes at-most-once
+- [x] Sell/refund — Delete sells the selected own building for 70% (income bonus removed too)
+- [x] Pacing hardening — sudden death disables regen and adds flat escalation (8/min); passive
+      one-building stalls that ran 20+ min now resolve (~8 min verified through the live server);
+      demo bot builds continuously like a player
 - [ ] Binary encoding (item 4)
-- [ ] Sell/refund + building move (item 5)
 - [ ] Client module refactor (item 8)
 - [ ] CI (item 9)
 - [ ] Settings panel (item 10)
