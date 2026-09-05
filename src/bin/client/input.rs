@@ -11,15 +11,14 @@ pub(crate) fn menu_and_lobby_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut net: ResMut<ClientNet>,
     mut state: ResMut<SnapshotState>,
-    mut help: ResMut<HelpOverlay>,
+    mut overlays: ResMut<UiOverlays>,
     world_selection: Res<WorldSelection>,
-    mut settings_overlay: ResMut<SettingsOverlay>,
 ) {
     if keys.just_pressed(KeyCode::KeyH) {
-        help.open = !help.open;
+        overlays.help = !overlays.help;
     }
     if keys.just_pressed(KeyCode::KeyO) {
-        settings_overlay.open = !settings_overlay.open;
+        overlays.settings = !overlays.settings;
     }
     if keys.just_pressed(KeyCode::Enter) {
         if !net.connected {

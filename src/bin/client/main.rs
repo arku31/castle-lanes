@@ -150,8 +150,9 @@ struct WorldHover {
 }
 
 #[derive(Resource, Default)]
-struct HelpOverlay {
-    open: bool,
+struct UiOverlays {
+    help: bool,
+    settings: bool,
 }
 
 #[derive(Resource, Default)]
@@ -218,6 +219,8 @@ struct UnitVisual {
     health: i32,
     sprite_base_y: f32,
     badge_base_y: f32,
+    kind: UnitKind,
+    last_pos: Vec2,
 }
 
 #[derive(Resource, Default)]
@@ -287,6 +290,20 @@ struct UnitSpriteAssets {
     ember_fire_lancer: Handle<Image>,
     ember_smoke_witch: Handle<Image>,
     ember_cinder_engine: Handle<Image>,
+}
+
+/// Multi-frame animation sets (plan.md Phase 2 item 5). Only units with a
+/// generated frame atlas are present; everything else keeps its static
+/// sprite. Frames: 0 idle, 1 walk, 2 wind-up, 3 strike, 4 death.
+#[derive(Resource, Default)]
+struct UnitFrameSets {
+    frames: HashMap<UnitKind, [Handle<Image>; 5]>,
+}
+
+#[derive(Resource)]
+struct FontAssets {
+    /// Fantasy display face for headers and titles (OFL-licensed).
+    display: Handle<Font>,
 }
 
 #[derive(Resource)]
@@ -429,9 +446,8 @@ fn main() {
         .init_resource::<RenderInterp>()
         .init_resource::<SceneRegistry>()
         .init_resource::<SfxQueue>()
-        .init_resource::<HelpOverlay>()
+        .init_resource::<UiOverlays>()
         .init_resource::<MatchHints>()
-        .init_resource::<SettingsOverlay>()
         .insert_resource(ClientSettings::load())
         .add_systems(Startup, setup)
         .add_systems(
@@ -590,6 +606,32 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     });
     spawn_grass_background(&mut commands);
     spawn_static_board(&mut commands, None);
+    let fonts = FontAssets {
+        display: asset_server.load("fonts/medievalsharp.ttf"),
+    };
+    commands.insert_resource(fonts);
+
+    let mut frame_sets = UnitFrameSets::default();
+    let vanguard_frames: [(&str, UnitKind); 8] = [
+        ("vanguard_guard", UnitKind::VanguardGuard),
+        ("vanguard_archer", UnitKind::VanguardArcher),
+        ("vanguard_pikeman", UnitKind::VanguardPikeman),
+        ("vanguard_shieldbearer", UnitKind::VanguardShieldbearer),
+        ("vanguard_battle_cleric", UnitKind::VanguardBattleCleric),
+        ("vanguard_lancer", UnitKind::VanguardLancer),
+        ("vanguard_ballista", UnitKind::VanguardBallista),
+        ("vanguard_arbalester", UnitKind::VanguardArbalester),
+    ];
+    for (name, kind) in vanguard_frames {
+        let load = |index: usize| {
+            asset_server.load(format!("art/units/frames/{name}_frame{index}.png"))
+        };
+        frame_sets.frames.insert(
+            kind,
+            [load(0), load(1), load(2), load(3), load(4)],
+        );
+    }
+    commands.insert_resource(frame_sets);
     let ambient = AudioAssets {
         ui_click: asset_server.load("audio/ui_click.wav"),
         build_place: asset_server.load("audio/build_place.wav"),
@@ -779,11 +821,6 @@ impl ClientSettings {
     fn resolution(&self) -> (f32, f32) {
         RESOLUTION_PRESETS[self.resolution_index.min(RESOLUTION_PRESETS.len() - 1)]
     }
-}
-
-#[derive(Resource, Default)]
-struct SettingsOverlay {
-    open: bool,
 }
 
 const UNIT_HEALTH_BAR_W: f32 = 34.0;

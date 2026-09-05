@@ -227,6 +227,8 @@ pub(crate) fn animate_units(
     state: Res<SnapshotState>,
     registry: Res<SceneRegistry>,
     mut transforms: Query<&mut Transform>,
+    mut sprites: Query<&mut Sprite>,
+    frame_sets: Res<UnitFrameSets>,
 ) {
     if registry.units.is_empty() {
         return;
@@ -270,6 +272,28 @@ pub(crate) fn animate_units(
         );
         let world = sim_pos_to_world(sim_pos);
         root.translation = Vec3::new(world.x, world.y, UNIT_ROOT_Z);
+
+        // Animation pass (plan.md Phase 2 item 5): swap sprite frames for
+        // units with a generated atlas. Attack frames fire right after the
+        // server resets the attack timer; walk frames cycle while moving.
+        if let Some(frames) = frame_sets.frames.get(&unit.kind) {
+            let config = state.balance.unit(unit.kind);
+            let moving = unit.velocity.x.abs() > 0.1;
+            let frame = if unit.attack_timer > config.attack_interval - 0.35 {
+                if unit.attack_timer > config.attack_interval - 0.18 {
+                    3
+                } else {
+                    2
+                }
+            } else if moving {
+                ((time.elapsed_secs() * 6.0) as usize + unit.id as usize) % 2
+            } else {
+                0
+            };
+            if let Ok(mut sprite) = sprites.get_mut(visual.sprite) {
+                sprite.image = frames[frame].clone();
+            }
+        }
 
         let phase = time.elapsed_secs() * 4.0 + (unit.id % 97) as f32 * 1.37;
         let bob = phase.sin() * 2.0;
@@ -1085,6 +1109,8 @@ pub(crate) fn spawn_unit_visual(
         health: unit.health,
         sprite_base_y: 12.0,
         badge_base_y: 27.0,
+        kind: unit.kind,
+        last_pos: world,
     }
 }
 

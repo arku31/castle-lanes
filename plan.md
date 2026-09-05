@@ -47,9 +47,10 @@ Phase 2 progress:
       counter bots, Ember's 100% dominance collapses (Grove 70%, Vanguard 100%
       over Ember) - the earlier finding was confirmed a bot-meta artifact
 - [ ] Animation + projectile pass (item 5) — Vanguard ranged projectile
-      pilot DONE; multi-frame sprite generation BLOCKED: the imagegen built-in
-      tool is not exposed in this session and the CLI fallback needs the user's
-      OPENAI_API_KEY (skill rule: no silent fallback)
+      pilot DONE; multi-frame generation UNBLOCKED via `codex exec` (built-in
+      image tool, no API key - see docs/kb/image-generation.md): Guard atlas
+      generated + sliced, remaining 7 Vanguard units generating; TextureAtlas
+      playback (walk/attack/death + death corpse) wired in the client
 
 Screenshots for the README remain blocked: ZCode needs Screen Recording permission (System Settings → Privacy & Security → Screen Recording → grant to ZCode Computer Use, then restart ZCode).
 Original baseline: commit `a79f462` + working tree (landed as `469d93d`).

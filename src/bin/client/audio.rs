@@ -30,7 +30,7 @@ pub(crate) fn play_sfx_queue(
 pub(crate) fn volume_toggle_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<ClientSettings>,
-    mut overlay: ResMut<SettingsOverlay>,
+    mut overlays: ResMut<UiOverlays>,
     mut window_query: Query<&mut Window>,
 ) {
     if keys.just_pressed(KeyCode::KeyV) {
@@ -38,9 +38,9 @@ pub(crate) fn volume_toggle_input(
         settings.save();
     }
     if keys.just_pressed(KeyCode::KeyO) {
-        overlay.open = !overlay.open;
+        overlays.settings = !overlays.settings;
     }
-    if !overlay.open {
+    if !overlays.settings {
         return;
     }
 

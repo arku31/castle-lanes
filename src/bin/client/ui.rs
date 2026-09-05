@@ -20,10 +20,10 @@ pub(crate) fn redraw_game_ui(
     world_selection: Res<WorldSelection>,
     _world_hover: Res<WorldHover>,
     building_icons: Res<BuildingIconAssets>,
-    help: Res<HelpOverlay>,
+    overlays: Res<UiOverlays>,
     mut hints: ResMut<MatchHints>,
-    settings_overlay: Res<SettingsOverlay>,
     settings: Res<ClientSettings>,
+    fonts: Res<FontAssets>,
 ) {
     for entity in &ui_query {
         commands.entity(entity).despawn();
@@ -127,18 +127,19 @@ pub(crate) fn redraw_game_ui(
         spawn_race_selection_popup(&mut commands, &balance, selected_race);
     }
 
-    if help.open {
-        spawn_help_overlay(&mut commands);
+    if overlays.help {
+        spawn_help_overlay(&mut commands, &fonts);
     }
-    if settings_overlay.open {
-        spawn_settings_overlay(&mut commands, &settings);
+    if overlays.settings {
+        spawn_settings_overlay(&mut commands, &settings, &fonts);
     }
     spawn_match_hint(&mut commands, &state, &net, &mut hints);
 }
 
 /// Settings panel: volume, mute, fullscreen, resolution - all persisted to
 /// config/client_settings.json (plan.md Phase 1 item 10).
-pub(crate) fn spawn_settings_overlay(commands: &mut Commands, settings: &ClientSettings) {
+pub(crate) fn spawn_settings_overlay(commands: &mut Commands, settings: &ClientSettings, fonts: &FontAssets) {
+    spawn_ui_title(commands, fonts, "SETTINGS", Vec2::new(0.0, 148.0), 20.0, 61.5);
     spawn_ui_rect(
         commands,
         Vec2::ZERO,
@@ -158,7 +159,7 @@ pub(crate) fn spawn_settings_overlay(commands: &mut Commands, settings: &ClientS
     spawn_ui_label(
         commands,
         &format!(
-            "SETTINGS                                        (O to close)\n\nMaster volume  {bar}\n       , quieter    . louder    M mute (global: V)\n\nFullscreen     {:<6}   F toggle\nResolution     {}x{}   N cycle preset\n\nSettings persist to config/client_settings.json",
+            "(O to close)\n\nMaster volume  {bar}\n       , quieter    . louder    M mute (global: V)\n\nFullscreen     {:<6}   F toggle\nResolution     {}x{}   N cycle preset\n\nSettings persist to config/client_settings.json",
             if settings.fullscreen { "On" } else { "Off" },
             width as i32,
             height as i32
@@ -241,7 +242,8 @@ pub(crate) fn spawn_match_hint(
     );
 }
 
-pub(crate) fn spawn_help_overlay(commands: &mut Commands) {
+pub(crate) fn spawn_help_overlay(commands: &mut Commands, fonts: &FontAssets) {
+    spawn_ui_title(commands, fonts, "CASTLE LANES - HOW TO PLAY", Vec2::new(0.0, 244.0), 22.0, 61.5);
     spawn_ui_rect(
         commands,
         Vec2::ZERO,
@@ -252,7 +254,7 @@ pub(crate) fn spawn_help_overlay(commands: &mut Commands) {
     spawn_ui_label(
         commands,
         &format!(
-            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nDelete sell building   Delete sell   R rematch   Ctrl+Q concede   H help   O settings   V mute"
+            "(press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nDelete sell building   Delete sell   R rematch   Ctrl+Q concede   H help   O settings   V mute"
         ),
         Vec2::new(0.0, 0.0),
         13.0,
@@ -1481,6 +1483,28 @@ pub(crate) fn truncate_text(value: &str, max_chars: usize) -> String {
     out
 }
 
+/// Header label in the fantasy display face (OFL font, plan.md item 5/7).
+pub(crate) fn spawn_ui_title(
+    commands: &mut Commands,
+    fonts: &FontAssets,
+    text: &str,
+    pos: Vec2,
+    size: f32,
+    z: f32,
+) {
+    spawn_ui_label_font(
+        commands,
+        text,
+        pos,
+        size,
+        TEXT_GOLD,
+        z,
+        Anchor::CENTER,
+        Justify::Center,
+        Some(fonts.display.clone()),
+    );
+}
+
 pub(crate) fn spawn_ui_panel(commands: &mut Commands, pos: Vec2, size: Vec2, z: f32) {
     spawn_ui_rect(
         commands,
@@ -1531,6 +1555,45 @@ pub(crate) fn spawn_ui_panel(commands: &mut Commands, pos: Vec2, size: Vec2, z: 
                 z + 2.0,
             );
         }
+    }
+    // Texture pass (plan.md Phase 2 item 5/7): inner gold pinstripe plus a
+    // top bevel highlight and bottom shade for a hammered-metal feel.
+    spawn_ui_rect(
+        commands,
+        pos,
+        size - Vec2::splat(14.0),
+        Color::srgba(0.0, 0.0, 0.0, 0.0),
+        z + 0.3,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x, pos.y + size.y * 0.5 - 6.0),
+        Vec2::new(size.x - 12.0, 1.5),
+        Color::srgba(0.98, 0.82, 0.45, 0.55),
+        z + 1.5,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x, pos.y - size.y * 0.5 + 6.0),
+        Vec2::new(size.x - 12.0, 1.5),
+        Color::srgba(0.98, 0.82, 0.45, 0.28),
+        z + 1.5,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x, pos.y),
+        Vec2::new(size.x - 20.0, 2.0),
+        Color::srgba(0.85, 0.68, 0.38, 0.16),
+        z + 1.4,
+    );
+    for dx in [-1.0, 1.0] {
+        spawn_ui_rect(
+            commands,
+            Vec2::new(pos.x + dx * (size.x * 0.5 - 10.0), pos.y),
+            Vec2::new(2.0, size.y - 16.0),
+            Color::srgba(0.42, 0.30, 0.14, 0.85),
+            z + 1.3,
+        );
     }
 }
 
@@ -1636,9 +1699,28 @@ pub(crate) fn spawn_ui_label(
     anchor: Anchor,
     justify: Justify,
 ) {
+    spawn_ui_label_font(commands, text, pos, size, color, z, anchor, justify, None);
+}
+
+/// Label with an explicit font handle (display face for headers).
+pub(crate) fn spawn_ui_label_font(
+    commands: &mut Commands,
+    text: &str,
+    pos: Vec2,
+    size: f32,
+    color: Color,
+    z: f32,
+    anchor: Anchor,
+    justify: Justify,
+    font: Option<Handle<Font>>,
+) {
+    let mut text_font = TextFont::from_font_size(size);
+    if let Some(handle) = font {
+        text_font.font = handle;
+    }
     commands.spawn((
         Text2d::new(text),
-        TextFont::from_font_size(size),
+        text_font,
         TextColor(color),
         TextLayout::new_with_justify(justify),
         anchor,
