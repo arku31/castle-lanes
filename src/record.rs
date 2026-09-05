@@ -20,6 +20,8 @@ pub struct MatchRecord {
     pub started_unix: u64,
     pub duration_secs: f32,
     pub winner: Option<Team>,
+    /// The balance config used for this match, so replays are self-contained.
+    pub balance: crate::sim::BalanceConfig,
     pub players: Vec<RecordedPlayer>,
     pub commands: Vec<RecordedCommand>,
     pub kills: Vec<RecordedKill>,
@@ -168,6 +170,7 @@ impl MatchRecorder {
                 .unwrap_or(0),
             duration_secs: 0.0,
             winner: None,
+            balance: sim.balance.clone(),
             players: sim
                 .players
                 .iter()
