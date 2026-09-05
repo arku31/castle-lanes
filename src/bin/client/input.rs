@@ -611,7 +611,10 @@ pub(crate) fn camera_controls(
     };
     if let Some(team) = net.team {
         if camera_home.initialized_for != Some(team) {
-            transform.translation.x = home_camera_x(team, scale, windows.single().ok());
+            transform.translation.x = camera_home
+                .home_override
+                .map(|fraction| (fraction - 0.5) * (WORLD_W - 120.0))
+                .unwrap_or_else(|| home_camera_x(team, scale, windows.single().ok()));
             transform.translation.y = 0.0;
             camera_home.initialized_for = Some(team);
         }

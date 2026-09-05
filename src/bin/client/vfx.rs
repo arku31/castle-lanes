@@ -13,7 +13,9 @@ pub(crate) fn detect_combat_vfx(
     state: Res<SnapshotState>,
     mut tracker: ResMut<CombatTracker>,
     mut sfx: ResMut<SfxQueue>,
+    mut budget: ResMut<VfxBudget>,
 ) {
+    budget.remaining = VFX_BUDGET_PER_SNAPSHOT;
     if !state.is_changed() {
         return;
     }
@@ -68,7 +70,15 @@ pub(crate) fn detect_combat_vfx(
                         Vec2::new(pos.x - unit_side.direction() * 38.0, pos.y),
                         config.attack_type,
                     ));
-                    spawn_combat_impact(&mut commands, pos, damage, attacker.0, attacker.1, false);
+                    spawn_combat_impact_budgeted(
+                        &mut commands,
+                        &mut budget,
+                        pos,
+                        damage,
+                        attacker.0,
+                        attacker.1,
+                        false,
+                    );
                     if unit.health > 0 {
                         sfx.push(match config.attack_mode {
                             castle_lanes::sim::AttackMode::Melee => Sfx::MeleeHit,
@@ -137,7 +147,15 @@ pub(crate) fn detect_combat_vfx(
                         ),
                         AttackType::Siege,
                     ));
-                spawn_combat_impact(&mut commands, pos, damage, attacker.0, attacker.1, true);
+                spawn_combat_impact_budgeted(
+                    &mut commands,
+                    &mut budget,
+                    pos,
+                    damage,
+                    attacker.0,
+                    attacker.1,
+                    true,
+                );
                 sfx.push(Sfx::CastleAlarm);
             }
         }
@@ -361,6 +379,31 @@ pub(crate) fn spawn_combat_impact(
 
     spawn_hit_burst(commands, target, attack_type, castle_hit);
     spawn_attack_streak(commands, source, target, attack_type);
+}
+
+/// Budgeted variant: skips streak/burst when the per-snapshot budget is spent.
+fn spawn_combat_impact_budgeted(
+    commands: &mut Commands,
+    budget: &mut VfxBudget,
+    target: Vec2,
+    damage: i32,
+    source: Vec2,
+    attack_type: AttackType,
+    castle_hit: bool,
+) {
+    if budget.take() {
+        spawn_combat_impact(commands, target, damage, source, attack_type, castle_hit);
+    } else {
+        let color = damage_number_color(attack_type, castle_hit);
+        spawn_damage_text(
+            commands,
+            &damage.to_string(),
+            target + Vec2::new(0.0, 29.0),
+            color,
+            if castle_hit { 32.0 } else { 25.0 },
+            VFX_Z + 5.0,
+        );
+    }
 }
 
 pub(crate) fn spawn_damage_text(

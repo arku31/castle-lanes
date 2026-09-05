@@ -26,12 +26,22 @@ img.crop((x, y, x + w, y + h)).save("docs/screenshots/battle.png")
 EOF
 ```
 
-## Route B — the MCP `screenshot` tool (needs ZCode restart)
+## Route B — the MCP `screenshot` tool (needs manual add + ZCode restart)
 
-The `mcp__computer-use__screenshot` tool keeps returning
-`Screen Recording is denied for ZCode` until ZCode is **fully quit and
-reopened** after the grant (the helper restarts with fresh TCC state). Until a
-restart happens, use Route A.
+The helper app (`ZCode Computer Use.app`, bundle `dev.zcode.cua-helper`) may
+never appear in the Screen Recording list on its own: it only *pre-flights*
+its permission (returning "denied") instead of triggering the macOS consent
+dialog. Manual add, verified path:
+
+1. Open the pane: `open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"`
+2. Click **+** under the app list, press **Cmd+Shift+G**, paste:
+   `/Users/igortverdokhleb/.zcode/computer-use`
+3. Select `ZCode Computer Use.app`, Open, toggle ON.
+4. Fully quit ZCode (Cmd+Q) and reopen — the helper restarts with the grant.
+
+`tccutil reset ScreenRecording dev.zcode.cua-helper` fails with "Failed to
+reset" while no entry exists — harmless, but it cannot force the prompt
+either. Until Route B works, use Route A.
 
 ## What to capture for the README (plan.md Phase 0 definition of done)
 

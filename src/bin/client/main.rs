@@ -163,6 +163,8 @@ struct MatchHints {
 #[derive(Resource, Default)]
 struct CameraHome {
     initialized_for: Option<Team>,
+    /// Start-p camera fraction of the battlefield (capture/spectate aid).
+    home_override: Option<f32>,
 }
 
 #[derive(Resource)]
@@ -247,6 +249,26 @@ enum SelectedObject {
     Castle(Team),
     Cell(Team, Lane, BuildZone, GridCell),
 }
+
+/// Per-snapshot VFX budget: with fast/huge battles the combat inference can
+/// try to spawn hundreds of streaks per snapshot, which turns the screen into
+/// bar soup. Damage text always spawns; streaks/bursts consume budget.
+#[derive(Resource)]
+struct VfxBudget {
+    remaining: u32,
+}
+
+impl VfxBudget {
+    fn take(&mut self) -> bool {
+        if self.remaining == 0 {
+            return false;
+        }
+        self.remaining -= 1;
+        true
+    }
+}
+
+const VFX_BUDGET_PER_SNAPSHOT: u32 = 14;
 
 #[derive(Resource, Default)]
 struct CombatTracker {
@@ -442,9 +464,16 @@ fn main() {
         .init_resource::<WorldSelection>()
         .init_resource::<WorldHover>()
         .init_resource::<CombatTracker>()
+        .insert_resource(VfxBudget {
+            remaining: VFX_BUDGET_PER_SNAPSHOT,
+        })
         .init_resource::<CameraHome>()
         .init_resource::<FogMemory>()
         .init_resource::<RenderInterp>()
+        .insert_resource(CameraHome {
+            initialized_for: None,
+            home_override: options.camera_x,
+        })
         .init_resource::<SceneRegistry>()
         .init_resource::<SfxQueue>()
         .init_resource::<UiOverlays>()
@@ -494,6 +523,9 @@ struct ClientOptions {
     auto_ready: bool,
     auto_build_demo: bool,
     auto_race: RaceKind,
+    /// Start the camera at this fraction of the battlefield (0 = left home,
+    /// 1 = right home) instead of the own base; capture/spectate aid.
+    camera_x: Option<f32>,
 }
 
 fn parse_args() -> ClientOptions {
@@ -502,6 +534,7 @@ fn parse_args() -> ClientOptions {
     let mut auto_ready = false;
     let mut auto_build_demo = false;
     let mut auto_race = RaceKind::Vanguard;
+    let mut camera_x = None;
     let args: Vec<String> = env::args().collect();
     let mut legacy_json = false;
     let mut idx = 1;
@@ -542,7 +575,12 @@ fn parse_args() -> ClientOptions {
         auto_ready,
         auto_build_demo,
         auto_race,
+        camera_x,
     }
+}
+
+fn argv_parse_fraction(value: &str) -> f32 {
+    value.parse::<f32>().unwrap_or(0.5).clamp(0.0, 1.0)
 }
 
 fn parse_race(value: &str) -> RaceKind {
