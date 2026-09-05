@@ -73,7 +73,7 @@ impl Team {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MatchPhase {
     Lobby,
     Playing,
@@ -100,7 +100,7 @@ impl BuildZone {
     pub const ALL: [BuildZone; 2] = [BuildZone::Front, BuildZone::Back];
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RaceKind {
     Vanguard,
     Grove,

@@ -34,11 +34,12 @@ struct GameRoom {
 }
 
 fn main() -> std::io::Result<()> {
-    let mut args = env::args().skip(1);
-    if args.next().as_deref() == Some("--version") {
+    let all_args: Vec<String> = env::args().skip(1).collect();
+    if all_args.first().map(String::as_str) == Some("--version") {
         println!("castle_lanes_server {}", castle_lanes::VERSION);
         return Ok(());
     }
+    let mut args = all_args.into_iter();
     let bind_addr = args
         .next()
         .unwrap_or_else(|| DEFAULT_SERVER_ADDR.to_string());
