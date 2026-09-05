@@ -1,0 +1,477 @@
+//! Headless bot-vs-bot balance harness (plan.md P0-4 / §6).
+//!
+//! Heuristic archetype bots play full matches for every race pairing and the
+//! report prints: left-side win-rate matrix, match length distribution, and
+//! per-unit-kind build counts (flags units that never get built).
+//!
+//! Run in release for real sample counts:
+//!
+//! ```bash
+//! cargo run --release --example sim_balance -- --games 100 > docs/balance-report.md
+//! ```
+//!
+//! Bots are "differentiable strategies", not good players: the harness exists
+//! to compare outcomes across seeds, not to model humans.
+
+use castle_lanes::sim::{
+    BalanceConfig, BuildZone, BuildingKind, DEFAULT_BALANCE_PATH, GameSim, GRID_H, GRID_W, Lane,
+    MatchPhase, PlayerId, RaceKind, Team, UnitKind,
+};
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::path::PathBuf;
+
+const DT: f32 = 1.0 / 30.0;
+const ACT_EVERY_TICKS: usize = 15;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Archetype {
+    Mixed,
+    Aggro,
+    Econ,
+    Tech,
+}
+
+impl Archetype {
+    fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "mixed" => Some(Self::Mixed),
+            "aggro" => Some(Self::Aggro),
+            "econ" => Some(Self::Econ),
+            "tech" => Some(Self::Tech),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Mixed => "mixed",
+            Self::Aggro => "aggro",
+            Self::Econ => "econ",
+            Self::Tech => "tech",
+        }
+    }
+}
+
+/// `(kind, cost, spawned_unit)` tuples read from the sim's balance.
+type BuildingOption = (BuildingKind, i32, Option<UnitKind>);
+
+struct SideBot {
+    player: PlayerId,
+    team: Team,
+    archetype: Archetype,
+    next_lane: usize,
+    next_cell: [usize; 2],
+    producer_rotation: usize,
+}
+
+struct MatchOutcome {
+    left_race: RaceKind,
+    right_race: RaceKind,
+    winner: Option<Team>,
+    elapsed_secs: f32,
+    adjudicated: bool,
+    first_castle_hit: Option<f32>,
+    unit_builds: HashMap<UnitKind, u32>,
+}
+
+fn main() {
+    let args = Args::parse();
+    let balance = BalanceConfig::load_or_default(
+        args.balance_path
+            .as_deref()
+            .unwrap_or(DEFAULT_BALANCE_PATH.as_ref()),
+    );
+    println!(
+        "sim_balance: {} games per pairing, archetype '{}', balance: {}",
+        args.games,
+        args.archetype.name(),
+        args.balance_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "embedded default".to_string())
+    );
+    println!();
+
+    let races = RaceKind::ALL;
+    let mut outcomes: Vec<MatchOutcome> = Vec::new();
+    for (left_index, &left_race) in races.iter().enumerate() {
+        for &right_race in &races[left_index..] {
+            for game in 0..args.games {
+                let seed = args
+                    .seed_base
+                    .wrapping_mul(1_000_003)
+                    .wrapping_add(game as u64 * 7919)
+                    .wrapping_add(1);
+                outcomes.push(run_match(
+                    &balance,
+                    left_race,
+                    right_race,
+                    args.archetype,
+                    seed,
+                    args.max_minutes,
+                ));
+            }
+        }
+    }
+
+    print_win_matrix(&outcomes);
+    print_pacing(&outcomes);
+    print_unit_usage(&outcomes);
+}
+
+struct Args {
+    games: usize,
+    seed_base: u64,
+    archetype: Archetype,
+    balance_path: Option<PathBuf>,
+    max_minutes: f32,
+}
+
+impl Args {
+    fn parse() -> Self {
+        let mut games = 100;
+        let mut max_minutes = 25.0;
+        let mut seed_base = 1;
+        let mut archetype = Archetype::Mixed;
+        let mut balance_path = None;
+        let argv: Vec<String> = env::args().collect();
+        let mut idx = 1;
+        while idx < argv.len() {
+            match argv[idx].as_str() {
+                "--games" if idx + 1 < argv.len() => {
+                    games = argv[idx + 1].parse().expect("--games must be a number");
+                    idx += 1;
+                }
+                "--max-mins" if idx + 1 < argv.len() => {
+                    max_minutes = argv[idx + 1]
+                        .parse()
+                        .expect("--max-mins must be a number");
+                    idx += 1;
+                }
+                "--seed-base" if idx + 1 < argv.len() => {
+                    seed_base = argv[idx + 1]
+                        .parse()
+                        .expect("--seed-base must be a number");
+                    idx += 1;
+                }
+                "--archetype" if idx + 1 < argv.len() => {
+                    archetype = Archetype::parse(&argv[idx + 1])
+                        .unwrap_or_else(|| panic!("--archetype must be mixed|aggro|econ|tech"));
+                    idx += 1;
+                }
+                "--balance" if idx + 1 < argv.len() => {
+                    balance_path = Some(PathBuf::from(&argv[idx + 1]));
+                    idx += 1;
+                }
+                other => panic!("unknown arg {other}"),
+            }
+            idx += 1;
+        }
+        Self {
+            games,
+            seed_base,
+            archetype,
+            balance_path,
+            max_minutes,
+        }
+    }
+}
+
+fn run_match(
+    balance: &BalanceConfig,
+    left_race: RaceKind,
+    right_race: RaceKind,
+    archetype: Archetype,
+    seed: u64,
+    max_minutes: f32,
+) -> MatchOutcome {
+    let mut sim = GameSim::with_seed(balance.clone(), seed);
+    let left = sim.join_or_update_player("Alice".to_string()).unwrap().id;
+    let right = sim.join_or_update_player("Bryn".to_string()).unwrap().id;
+    sim.set_race(left, left_race).unwrap();
+    sim.set_race(right, right_race).unwrap();
+    sim.set_ready(left, true).unwrap();
+    sim.set_ready(right, true).unwrap();
+
+    let mut bots = [
+        SideBot::new(left, Team::Left, archetype),
+        SideBot::new(right, Team::Right, archetype),
+    ];
+    let mut seen_units: HashSet<u64> = HashSet::new();
+    let mut unit_builds: HashMap<UnitKind, u32> = HashMap::new();
+    let mut first_castle_hit: Option<f32> = None;
+    let max_ticks = (max_minutes * 60.0 / DT) as usize;
+
+    for step in 0..max_ticks {
+        sim.tick(DT);
+        if first_castle_hit.is_none()
+            && sim
+                .castles
+                .iter()
+                .any(|castle| castle.health < castle.max_health)
+        {
+            first_castle_hit = Some(sim.elapsed_secs());
+        }
+        for unit in &sim.units {
+            if seen_units.insert(unit.id) {
+                *unit_builds.entry(unit.kind).or_insert(0) += 1;
+            }
+        }
+        if step % ACT_EVERY_TICKS == 0 {
+            let occupied: Vec<(Team, Lane, BuildZone, (i32, i32))> = sim
+                .buildings
+                .iter()
+                .map(|building| {
+                    (
+                        building.owner,
+                        building.lane,
+                        building.zone,
+                        (building.cell.x, building.cell.y),
+                    )
+                })
+                .collect();
+            for bot in bots.iter_mut() {
+                bot.act(&mut sim, &occupied);
+            }
+        }
+        if sim.phase == MatchPhase::GameOver {
+            break;
+        }
+    }
+
+    let adjudicated = sim.phase == MatchPhase::Playing
+        || sim.castles.iter().all(|castle| castle.health <= 0);
+
+    MatchOutcome {
+        left_race,
+        right_race,
+        winner: sim.winner,
+        elapsed_secs: sim.elapsed_secs(),
+        adjudicated,
+        first_castle_hit,
+        unit_builds,
+    }
+}
+
+/// Count buildings owned by a side; `producers_only` counts unit producers,
+/// otherwise economy buildings.
+fn count_owned(sim: &GameSim, team: Team, producers_only: bool) -> usize {
+    sim.buildings
+        .iter()
+        .filter(|building| {
+            building.owner == team
+                && sim.balance.building(building.kind).spawned_unit.is_some() == producers_only
+        })
+        .count()
+}
+
+impl SideBot {
+    fn new(player: PlayerId, team: Team, archetype: Archetype) -> Self {
+        Self {
+            player,
+            team,
+            archetype,
+            next_lane: 0,
+            next_cell: [0, 0],
+            producer_rotation: 0,
+        }
+    }
+
+    fn act(
+        &mut self,
+        sim: &mut GameSim,
+        occupied: &[(Team, Lane, BuildZone, (i32, i32))],
+    ) {
+        if sim.phase != MatchPhase::Playing {
+            return;
+        }
+        let slot = self.team.slot();
+        let race = match sim.player(self.player).and_then(|player| player.race) {
+            Some(race) => race,
+            None => return,
+        };
+        let mut options: Vec<BuildingOption> = sim.balance.race(race).buildings.iter().map(|kind| {
+            let config = sim.balance.building(*kind);
+            (config.kind, config.cost, config.spawned_unit)
+        }).collect();
+        options.sort_by(|a, b| b.1.cmp(&a.1)); // most expensive first
+        let producers: Vec<BuildingOption> = options.iter().copied().filter(|o| o.2.is_some()).collect();
+        let econ: Vec<BuildingOption> = options.iter().copied().filter(|o| o.2.is_none()).collect();
+        let mut bought = 0;
+        let mut attempts = 0;
+        while bought < 3 && attempts < 60 {
+            attempts += 1;
+            let gold = sim.economies[slot].gold;
+            let econ_count = count_owned(sim, self.team, false);
+            let producer_count = count_owned(sim, self.team, true) + econ_count;
+            let (choice, zone) = match self.archetype {
+                Archetype::Mixed => {
+                    if econ_count * 3 < producer_count + 1 {
+                        (econ.iter().rev().find(|o| o.1 <= gold), BuildZone::Back)
+                    } else {
+                        // Rotate through the producer roster cost-ascending so
+                        // unit-usage stats exercise every building.
+                        let affordable: Vec<_> = producers
+                            .iter()
+                            .rev()
+                            .filter(|o| o.1 <= gold)
+                            .collect();
+                        let pick = affordable
+                            .get(self.producer_rotation % affordable.len().max(1))
+                            .copied();
+                        (pick, BuildZone::Front)
+                    }
+                }
+                Archetype::Aggro => (
+                    producers.iter().rev().find(|o| o.1 <= gold),
+                    BuildZone::Front,
+                ),
+                Archetype::Tech => {
+                    let cheapest = producers.iter().rev().next();
+                    let expensive = producers.first();
+                    let owns_enough = producer_count >= 2;
+                    if owns_enough && expensive.is_some_and(|o| o.1 <= gold) {
+                        (expensive, BuildZone::Front)
+                    } else if !owns_enough
+                        && cheapest.is_some_and(|o| o.1 <= gold)
+                    {
+                        (cheapest, BuildZone::Front)
+                    } else if expensive.is_some_and(|o| o.1 <= gold) {
+                        (expensive, BuildZone::Front)
+                    } else {
+                        (None, BuildZone::Front)
+                    }
+                }
+                Archetype::Econ => {
+                    if econ_count * 2 < producer_count + 1 {
+                        (
+                            econ.iter().rev().find(|o| o.1 <= gold),
+                            BuildZone::Back,
+                        )
+                    } else {
+                        (
+                            producers.iter().rev().find(|o| o.1 <= gold),
+                            BuildZone::Front,
+                        )
+                    }
+                }
+            };
+            let Some((kind, _, _)) = choice else {
+                break;
+            };
+            let zone_index = match zone {
+                BuildZone::Front => 0,
+                BuildZone::Back => 1,
+            };
+            let lane = Lane::ALL[self.next_lane % Lane::ALL.len()];
+            let index = self.next_cell[zone_index];
+            let cell = castle_lanes::sim::GridCell {
+                x: (index % GRID_W as usize) as i32,
+                y: ((index / GRID_W as usize) % GRID_H as usize) as i32,
+            };
+            if occupied.iter().any(|(owner, l, z, c)| {
+                *owner == self.team && *l == lane && *z == zone && c.0 == cell.x && c.1 == cell.y
+            }) {
+                self.next_cell[zone_index] += 1;
+                continue;
+            }
+            if sim
+                .place_building(self.player, *kind, lane, zone, cell)
+                .is_ok()
+            {
+                self.next_cell[zone_index] += 1;
+                if zone == BuildZone::Front {
+                    self.next_lane += 1;
+                    self.producer_rotation += 1;
+                }
+                bought += 1;
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+fn print_win_matrix(outcomes: &[MatchOutcome]) {
+    let races = RaceKind::ALL;
+    println!("== Left-side win rate, decisive games only (rows = left race, cols = right race; '-' = no decisive games) ==");
+    print!("{:>10}", "");
+    for race in races {
+        print!("{:>10}", race.fallback_name());
+    }
+    println!();
+    for &left in races.iter() {
+        print!("{:>10}", left.fallback_name());
+        for &right in races.iter() {
+            let matching: Vec<&MatchOutcome> = outcomes
+                .iter()
+                .filter(|o| o.left_race == left && o.right_race == right)
+                .collect();
+            let finished: Vec<&MatchOutcome> =
+                matching.iter().copied().filter(|o| o.winner.is_some()).collect();
+            let wins = finished
+                .iter()
+                .filter(|o| o.winner == Some(Team::Left))
+                .count();
+            let percent = if finished.is_empty() {
+                f32::NAN
+            } else {
+                wins as f32 * 100.0 / finished.len() as f32
+            };
+            if percent.is_nan() {
+                print!("{:>9}", "-");
+            } else {
+                print!("{:>8.1}%", percent);
+            }
+        }
+        println!();
+    }
+    println!();
+}
+
+fn print_pacing(outcomes: &[MatchOutcome]) {
+    let mut lengths: Vec<f32> = outcomes.iter().map(|o| o.elapsed_secs).collect();
+    lengths.sort_by(|a, b| a.total_cmp(b));
+    let percentile = |p: f32| -> f32 {
+        if lengths.is_empty() {
+            return 0.0;
+        }
+        let index = ((lengths.len() as f32 - 1.0) * p).round() as usize;
+        lengths[index.min(lengths.len() - 1)]
+    };
+    let adjudicated = outcomes.iter().filter(|o| o.adjudicated).count();
+    let first_hits: Vec<f32> = outcomes.iter().filter_map(|o| o.first_castle_hit).collect();
+    let avg_first_hit = if first_hits.is_empty() {
+        0.0
+    } else {
+        first_hits.iter().sum::<f32>() / first_hits.len() as f32
+    };
+    println!("== Pacing ==");
+    println!(
+        "matches: {} | length p10 {:.0}s p50 {:.0}s p90 {:.0}s | adjudicated/unfinished: {} | first castle damage avg {:.0}s",
+        outcomes.len(),
+        percentile(0.10),
+        percentile(0.50),
+        percentile(0.90),
+        adjudicated,
+        avg_first_hit
+    );
+    println!();
+}
+
+fn print_unit_usage(outcomes: &[MatchOutcome]) {
+    let mut totals: HashMap<UnitKind, u32> = HashMap::new();
+    for outcome in outcomes {
+        for (kind, count) in &outcome.unit_builds {
+            *totals.entry(*kind).or_insert(0) += count;
+        }
+    }
+    let mut rows: Vec<(UnitKind, u32)> = totals.into_iter().collect();
+    rows.sort_by_key(|(_, count)| *count);
+    println!("== Unit builds per 100 matches (lowest first) ==");
+    let scale = outcomes.len().max(1) as f32 / 100.0;
+    for (kind, count) in rows {
+        println!("{:>22} {:>8.1}", kind.fallback_name(), count as f32 / scale);
+    }
+}

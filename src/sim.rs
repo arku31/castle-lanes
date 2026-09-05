@@ -247,7 +247,7 @@ impl BuildingKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnitKind {
     VanguardGuard,
     VanguardArcher,
@@ -921,6 +921,10 @@ impl GameSim {
 
     pub fn seed(&self) -> u64 {
         self.seed
+    }
+
+    pub fn elapsed_secs(&self) -> f32 {
+        self.elapsed_secs
     }
 
     pub fn snapshot(&self) -> MatchSnapshot {
