@@ -18,7 +18,9 @@ Phase 1 progress:
       live through the server
 - [x] CI (item 9) — .github/workflows/ci.yml: fmt, check, serial tests,
       release sim_perf + sim_balance smokes on push/PR
-- [ ] Binary encoding (item 4)
+- [x] Binary encoding (item 4) — tagged datagrams (bincode default, JSON via
+      --legacy-json, untagged-JSON fallback on decode); ~3.8x smaller packets,
+      30x faster encode; docs/bandwidth.md has before/after measurements
 - [ ] Client module refactor (item 8)
 - [ ] Settings panel (item 10)
 
