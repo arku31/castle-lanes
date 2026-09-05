@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 pub const DEFAULT_SERVER_ADDR: &str = "127.0.0.1:4000";
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 pub type GameId = u32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +39,9 @@ pub enum ClientPacket {
         cell: GridCell,
     },
     VoteRematch {
+        player_id: PlayerId,
+    },
+    Surrender {
         player_id: PlayerId,
     },
     Disconnect {

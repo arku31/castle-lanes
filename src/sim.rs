@@ -1073,16 +1073,51 @@ impl GameSim {
         Ok(())
     }
 
+    /// Disconnecting during a match no longer destroys it: the seat stays
+    /// reserved (plan.md Phase 1 reconnect grace). The server resets the
+    /// match to the lobby only once the reconnect deadline lapses, via
+    /// [`GameSim::reset_to_lobby`].
     pub fn disconnect_player(&mut self, player_id: PlayerId) {
         if let Some(player) = self.players.iter_mut().find(|p| p.id == player_id) {
             player.connected = false;
             player.ready = false;
-            self.message = format!("{} disconnected.", player.name);
             if self.phase == MatchPhase::Playing {
-                self.phase = MatchPhase::Lobby;
-                self.clear_match_entities();
+                self.message = format!(
+                    "{} disconnected - waiting for reconnect (90s).",
+                    player.name
+                );
+                return;
             }
+            self.message = format!("{} disconnected.", player.name);
         }
+    }
+
+    /// True while a match is running but at least one seat is empty; the
+    /// server shows the wait message and can reset after its grace window.
+    pub fn waiting_for_reconnect(&self) -> bool {
+        self.phase == MatchPhase::Playing && self.players.iter().any(|player| !player.connected)
+    }
+
+    pub fn reset_to_lobby(&mut self) {
+        self.reset_to_lobby_inner();
+    }
+
+    /// Concede the match: the surrendering player's castle falls immediately
+    /// and victory resolves through the normal path.
+    pub fn surrender(&mut self, player_id: PlayerId) -> Result<(), String> {
+        if self.phase != MatchPhase::Playing {
+            return Err("You can only concede during a match.".to_string());
+        }
+        let team = self
+            .players
+            .iter()
+            .find(|p| p.id == player_id)
+            .map(|p| p.team)
+            .ok_or_else(|| "Unknown player.".to_string())?;
+        self.castles[team.slot()].health = 0;
+        self.message = format!("{team:?} conceded the match.");
+        self.check_victory();
+        Ok(())
     }
 
     pub fn set_ready(&mut self, player_id: PlayerId, ready: bool) -> Result<(), String> {
@@ -1217,7 +1252,7 @@ impl GameSim {
         }
     }
 
-    fn reset_to_lobby(&mut self) {
+    fn reset_to_lobby_inner(&mut self) {
         self.phase = MatchPhase::Lobby;
         self.reset_match_state();
         for player in &mut self.players {
@@ -2534,6 +2569,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn disconnect_during_match_preserves_it_and_reconnect_restores_seat() {
+        let mut sim = ready_two_players();
+        let left_id = sim.players[0].id;
+        assert_eq!(sim.phase, MatchPhase::Playing);
+
+        sim.disconnect_player(left_id);
+        assert_eq!(sim.phase, MatchPhase::Playing, "match must survive");
+        assert!(sim.waiting_for_reconnect());
+
+        let reconnected = sim
+            .join_or_update_player("Alice".to_string())
+            .expect("reconnect by name");
+        assert_eq!(reconnected.id, left_id);
+        assert_eq!(reconnected.team, Team::Left);
+        assert!(sim.players.iter().all(|player| player.connected));
+        assert_eq!(sim.phase, MatchPhase::Playing);
+        assert!(!sim.waiting_for_reconnect());
+    }
+
+    #[test]
+    fn surrender_ends_the_match() {
+        let mut sim = ready_two_players();
+        let left_id = sim.players[0].id;
+        sim.surrender(left_id).unwrap();
+        assert_eq!(sim.phase, MatchPhase::GameOver);
+        assert_eq!(sim.winner, Some(Team::Right));
     }
 
     #[test]

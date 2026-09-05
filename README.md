@@ -47,6 +47,7 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `+`, `-`: zoom the camera.
 - `Home`: reset the camera.
 - `R`: vote for rematch after game over.
+- `Ctrl+Q`: concede the match (your castle falls; the opponent wins).
 - `H`: open or close the in-game help/rules overlay.
 - `V`: mute or unmute all sound (persisted to `config/client_settings.json`).
 - `--race vanguard|grove|ember`: client/bot flag for demo/test race selection.
@@ -54,6 +55,8 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `--auto-build-demo`: client flag for demo/test runs that places your first race building after match start.
 
 Players must choose a race before readying. The server rejects ready commands until a race is selected.
+
+Disconnecting during a match does not destroy it: the seat is reserved for 90 seconds and the same name can rejoin the game from the lobby to resume. If the grace window lapses, the match resets to the lobby.
 
 ## Balance Config
 

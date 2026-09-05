@@ -774,6 +774,13 @@ fn menu_and_lobby_input(
             send_client(&net, &ClientPacket::VoteRematch { player_id });
         }
     }
+    if keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight])
+        && keys.just_pressed(KeyCode::KeyQ)
+    {
+        if let Some(player_id) = net.player_id {
+            send_client(&net, &ClientPacket::Surrender { player_id });
+        }
+    }
 }
 
 fn build_selection_input(
@@ -2282,7 +2289,7 @@ fn spawn_help_overlay(commands: &mut Commands) {
     spawn_ui_label(
         commands,
         &format!(
-            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nR rematch   H help   V mute"
+            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nR rematch   Ctrl+Q concede   H help   V mute"
         ),
         Vec2::new(0.0, 0.0),
         13.0,

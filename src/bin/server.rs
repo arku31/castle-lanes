@@ -14,6 +14,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const TICK_RATE: Duration = Duration::from_millis(33);
 const SNAPSHOT_RATE: Duration = Duration::from_millis(100);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(8);
+const RECONNECT_GRACE: Duration = Duration::from_secs(90);
+
+/// Seats that disconnected during a live match, with the instant their
+/// reserved seat expires (plan.md Phase 1 reconnect grace).
+type ReconnectDeadlines = HashMap<(GameId, PlayerId), Instant>;
 const SAFE_UDP_PAYLOAD_BYTES: usize = 1200;
 const MAX_UDP_PAYLOAD_BYTES: usize = 60_000;
 const SNAPSHOT_SIZE_LOG_INTERVAL_TICKS: u64 = 30;
@@ -62,6 +67,7 @@ fn main() -> std::io::Result<()> {
     let mut rooms: HashMap<GameId, GameRoom> = HashMap::new();
     let mut clients: HashMap<SocketAddr, ClientSession> = HashMap::new();
     let mut next_game_id: GameId = 1;
+    let mut reconnect_deadlines: ReconnectDeadlines = HashMap::new();
     let mut last_tick = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut buf = [0_u8; 4096];
@@ -105,6 +111,9 @@ fn main() -> std::io::Result<()> {
             disconnect_session(&mut rooms, &mut clients, addr);
         }
         remove_empty_rooms(&mut rooms);
+        if update_reconnect_deadlines(&mut rooms, &mut reconnect_deadlines, now) {
+            broadcast_game_lists(&socket, &rooms, &clients);
+        }
 
         if now.duration_since(last_snapshot) >= SNAPSHOT_RATE {
             broadcast_rooms(&socket, &mut rooms, &mut clients);
@@ -220,6 +229,10 @@ fn handle_packet(
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.vote_rematch(player_id);
         }
+        ClientPacket::Surrender { player_id } => {
+            let room = room_for_player(rooms, clients, addr, player_id)?;
+            room.sim.surrender(player_id)?;
+        }
         ClientPacket::Disconnect { player_id } => {
             let session = clients
                 .get(&addr)
@@ -233,6 +246,62 @@ fn handle_packet(
         }
     }
     Ok(())
+}
+
+/// Track reserved seats for disconnected players and reset matches whose
+/// grace window lapses without a reconnect. Returns true when any lobby
+/// changed and game lists should be re-broadcast.
+fn update_reconnect_deadlines(
+    rooms: &mut HashMap<GameId, GameRoom>,
+    pending: &mut ReconnectDeadlines,
+    now: Instant,
+) -> bool {
+    let mut changed_games = false;
+    for room in rooms.values_mut() {
+        let waiting = room.sim.waiting_for_reconnect();
+        if waiting {
+            for player in &room.sim.players {
+                if !player.connected {
+                    pending
+                        .entry((room.id, player.id))
+                        .or_insert(now + RECONNECT_GRACE);
+                }
+            }
+        } else {
+            pending.retain(|(game_id, _), _| *game_id != room.id);
+        }
+    }
+    let expired: Vec<(GameId, PlayerId)> = pending
+        .iter()
+        .filter(|(_, deadline)| **deadline <= now)
+        .map(|(key, _)| *key)
+        .collect();
+    for (game_id, player_id) in expired {
+        pending.remove(&(game_id, player_id));
+        let Some(room) = rooms.get_mut(&game_id) else {
+            continue;
+        };
+        let player_name = room
+            .sim
+            .players
+            .iter()
+            .find(|player| player.id == player_id)
+            .map(|player| player.name.clone());
+        if room.sim.waiting_for_reconnect()
+            && room
+                .sim
+                .players
+                .iter()
+                .any(|player| player.id == player_id && !player.connected)
+        {
+            room.sim.reset_to_lobby();
+            if let Some(name) = player_name {
+                room.sim.message = format!("{name} failed to reconnect. Set ready to restart.");
+            }
+            changed_games = true;
+        }
+    }
+    changed_games
 }
 
 fn room_seed(game_id: GameId) -> u64 {
