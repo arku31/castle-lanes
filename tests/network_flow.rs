@@ -1,4 +1,6 @@
-use castle_lanes::net::{ClientPacket, PROTOCOL_VERSION, ServerPacket, decode_server, encode};
+use castle_lanes::net::{
+    ClientPacket, PROTOCOL_VERSION, ServerPacket, apply_snapshot_delta, decode_server, encode,
+};
 use castle_lanes::sim::{
     BalanceConfig, BuildZone, BuildingKind, GridCell, Lane, MatchPhase, RaceKind,
 };
@@ -30,13 +32,20 @@ fn dedicated_server_runs_two_player_building_flow() {
         .set_read_timeout(Some(Duration::from_millis(50)))
         .unwrap();
 
-    let left_player = join(&left, server_addr, "Alice");
-    let right_player = join(&right, server_addr, "Bryn");
+    connect(&left, server_addr, "Alice");
+    let left_player = create_game(&left, server_addr, "Alice's Game");
+    connect(&right, server_addr, "Bryn");
+    let game_id = wait_for_game_list(&right, Duration::from_secs(3))
+        .first()
+        .expect("created game should be listed")
+        .id;
+    let right_player = join_game(&right, server_addr, game_id);
     let duplicate = UdpSocket::bind("127.0.0.1:0").unwrap();
     duplicate
         .set_read_timeout(Some(Duration::from_millis(50)))
         .unwrap();
     assert_duplicate_name_rejected(&duplicate, server_addr, "Alice");
+    let mut left_snapshot = None;
 
     send(
         &left,
@@ -72,9 +81,13 @@ fn dedicated_server_runs_two_player_building_flow() {
         },
     );
 
-    wait_for_snapshot(&left, Duration::from_secs(3), |snapshot| {
-        snapshot.phase == MatchPhase::Playing
-    });
+    wait_for_snapshot(
+        &left,
+        &mut left_snapshot,
+        Duration::from_secs(3),
+        "playing",
+        |snapshot| snapshot.phase == MatchPhase::Playing,
+    );
 
     send(
         &left,
@@ -99,9 +112,13 @@ fn dedicated_server_runs_two_player_building_flow() {
         },
     );
 
-    wait_for_snapshot(&left, Duration::from_secs(3), |snapshot| {
-        snapshot.buildings.len() == 2
-    });
+    wait_for_snapshot(
+        &left,
+        &mut left_snapshot,
+        Duration::from_secs(3),
+        "two buildings",
+        |snapshot| snapshot.buildings.len() == 2,
+    );
     let spawn_timeout = Duration::from_secs_f32(
         BalanceConfig::default()
             .building(BuildingKind::VanguardBarracks)
@@ -111,6 +128,7 @@ fn dedicated_server_runs_two_player_building_flow() {
     );
     wait_for_snapshot_with_keepalive(
         &left,
+        &mut left_snapshot,
         server_addr,
         spawn_timeout,
         &[(&left, "Alice"), (&right, "Bryn")],
@@ -131,14 +149,25 @@ fn dedicated_server_accepts_rematch_votes_and_resets_lobby() {
         .set_read_timeout(Some(Duration::from_millis(50)))
         .unwrap();
 
-    let left_player = join(&left, server_addr, "RematchAlice");
-    let right_player = join(&right, server_addr, "RematchBryn");
+    connect(&left, server_addr, "RematchAlice");
+    let left_player = create_game(&left, server_addr, "Fast Rematch");
+    connect(&right, server_addr, "RematchBryn");
+    let game_id = wait_for_game_list(&right, Duration::from_secs(3))
+        .first()
+        .expect("created game should be listed")
+        .id;
+    let right_player = join_game(&right, server_addr, game_id);
+    let mut left_snapshot = None;
     ready_player(&left, server_addr, left_player.id, RaceKind::Vanguard);
     ready_player(&right, server_addr, right_player.id, RaceKind::Ember);
 
-    wait_for_snapshot(&left, Duration::from_secs(3), |snapshot| {
-        snapshot.phase == MatchPhase::GameOver
-    });
+    wait_for_snapshot(
+        &left,
+        &mut left_snapshot,
+        Duration::from_secs(3),
+        "game over",
+        |snapshot| snapshot.phase == MatchPhase::GameOver,
+    );
     send(
         &left,
         server_addr,
@@ -154,19 +183,51 @@ fn dedicated_server_accepts_rematch_votes_and_resets_lobby() {
         },
     );
 
-    let reset = wait_for_snapshot(&left, Duration::from_secs(3), |snapshot| {
-        snapshot.phase == MatchPhase::Lobby
-            && snapshot
-                .players
-                .iter()
-                .all(|player| !player.ready && player.race.is_none() && !player.rematch_vote)
-            && snapshot.buildings.is_empty()
-            && snapshot.units.is_empty()
-            && snapshot.winner.is_none()
-    });
+    let reset = wait_for_snapshot(
+        &left,
+        &mut left_snapshot,
+        Duration::from_secs(3),
+        "lobby reset",
+        |snapshot| {
+            snapshot.phase == MatchPhase::Lobby
+                && snapshot
+                    .players
+                    .iter()
+                    .all(|player| !player.ready && player.race.is_none() && !player.rematch_vote)
+                && snapshot.buildings.is_empty()
+                && snapshot.units.is_empty()
+                && snapshot.winner.is_none()
+        },
+    );
 
     assert_eq!(reset.message, "Rematch ready. Set ready again.");
     let _ = fs::remove_file(balance_path);
+}
+
+#[test]
+fn dedicated_server_lists_multiple_games() {
+    let server_addr = unused_local_addr();
+    let _server = spawn_server(server_addr);
+    let first = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let second = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let browser = UdpSocket::bind("127.0.0.1:0").unwrap();
+    for socket in [&first, &second, &browser] {
+        socket
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+    }
+
+    connect(&first, server_addr, "HostOne");
+    create_game(&first, server_addr, "First Game");
+    connect(&second, server_addr, "HostTwo");
+    create_game(&second, server_addr, "Second Game");
+    connect(&browser, server_addr, "Browser");
+
+    let games = wait_for_game_list(&browser, Duration::from_secs(3));
+
+    assert!(games.iter().any(|game| game.name == "First Game"));
+    assert!(games.iter().any(|game| game.name == "Second Game"));
+    assert_eq!(games.len(), 2);
 }
 
 fn assert_duplicate_name_rejected(socket: &UdpSocket, server_addr: SocketAddr, name: &str) {
@@ -213,7 +274,7 @@ fn spawn_server_args(addr: SocketAddr, balance_path: Option<&Path>) -> ServerPro
     ServerProcess(child)
 }
 
-fn join(socket: &UdpSocket, server_addr: SocketAddr, name: &str) -> castle_lanes::sim::PlayerInfo {
+fn connect(socket: &UdpSocket, server_addr: SocketAddr, name: &str) {
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         send(
@@ -224,11 +285,55 @@ fn join(socket: &UdpSocket, server_addr: SocketAddr, name: &str) -> castle_lanes
                 name: name.to_string(),
             },
         );
+        if let Some(ServerPacket::Connected { .. }) = recv(socket) {
+            return;
+        }
+    }
+    panic!("server did not connect {name}");
+}
+
+fn create_game(
+    socket: &UdpSocket,
+    server_addr: SocketAddr,
+    name: &str,
+) -> castle_lanes::sim::PlayerInfo {
+    send(
+        socket,
+        server_addr,
+        &ClientPacket::CreateGame {
+            name: name.to_string(),
+        },
+    );
+    wait_for_welcome(socket, Duration::from_secs(3))
+}
+
+fn join_game(
+    socket: &UdpSocket,
+    server_addr: SocketAddr,
+    game_id: castle_lanes::net::GameId,
+) -> castle_lanes::sim::PlayerInfo {
+    send(socket, server_addr, &ClientPacket::JoinGame { game_id });
+    wait_for_welcome(socket, Duration::from_secs(3))
+}
+
+fn wait_for_welcome(socket: &UdpSocket, timeout: Duration) -> castle_lanes::sim::PlayerInfo {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
         if let Some(ServerPacket::Welcome { player, .. }) = recv(socket) {
             return player;
         }
     }
-    panic!("server did not welcome {name}");
+    panic!("server did not welcome player into game");
+}
+
+fn wait_for_game_list(socket: &UdpSocket, timeout: Duration) -> Vec<castle_lanes::net::GameInfo> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(ServerPacket::GameList { games }) = recv(socket) {
+            return games;
+        }
+    }
+    panic!("server did not send game list");
 }
 
 fn ready_player(
@@ -269,22 +374,28 @@ fn write_fast_gameover_balance() -> std::path::PathBuf {
 
 fn wait_for_snapshot(
     socket: &UdpSocket,
+    snapshot: &mut Option<castle_lanes::sim::MatchSnapshot>,
     timeout: Duration,
+    label: &str,
     predicate: impl Fn(&castle_lanes::sim::MatchSnapshot) -> bool,
 ) -> castle_lanes::sim::MatchSnapshot {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Some(ServerPacket::Snapshot(snapshot)) = recv(socket) {
-            if predicate(&snapshot) {
-                return snapshot;
+        if let Some(packet) = recv(socket) {
+            update_snapshot(snapshot, packet);
+        }
+        if let Some(snapshot) = snapshot.as_ref() {
+            if predicate(snapshot) {
+                return snapshot.clone();
             }
         }
     }
-    panic!("timed out waiting for matching snapshot");
+    panic!("timed out waiting for matching snapshot: {label}");
 }
 
 fn wait_for_snapshot_with_keepalive(
     socket: &UdpSocket,
+    snapshot: &mut Option<castle_lanes::sim::MatchSnapshot>,
     server_addr: SocketAddr,
     timeout: Duration,
     keepalives: &[(&UdpSocket, &str)],
@@ -307,13 +418,30 @@ fn wait_for_snapshot_with_keepalive(
             next_keepalive = Instant::now() + Duration::from_secs(1);
         }
 
-        if let Some(ServerPacket::Snapshot(snapshot)) = recv(socket) {
-            if predicate(&snapshot) {
-                return snapshot;
+        if let Some(packet) = recv(socket) {
+            update_snapshot(snapshot, packet);
+        }
+        if let Some(snapshot) = snapshot.as_ref() {
+            if predicate(snapshot) {
+                return snapshot.clone();
             }
         }
     }
     panic!("timed out waiting for matching snapshot");
+}
+
+fn update_snapshot(snapshot: &mut Option<castle_lanes::sim::MatchSnapshot>, packet: ServerPacket) {
+    match packet {
+        ServerPacket::Snapshot(next_snapshot) => {
+            *snapshot = Some(next_snapshot);
+        }
+        ServerPacket::SnapshotDelta(delta) => {
+            if let Some(snapshot) = snapshot {
+                apply_snapshot_delta(snapshot, delta);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn send(socket: &UdpSocket, server_addr: SocketAddr, packet: &ClientPacket) {

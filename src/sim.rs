@@ -743,7 +743,7 @@ impl WorldPos {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerInfo {
     pub id: PlayerId,
     pub name: String,
@@ -754,7 +754,7 @@ pub struct PlayerInfo {
     pub rematch_vote: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Economy {
     pub gold: i32,
     pub income: i32,
@@ -769,7 +769,7 @@ impl Default for Economy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Castle {
     pub team: Team,
     pub health: i32,
@@ -777,7 +777,7 @@ pub struct Castle {
     pub armor_type: ArmorType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Building {
     pub id: u64,
     pub owner: Team,
@@ -790,7 +790,7 @@ pub struct Building {
     pub spawn_timer: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Unit {
     pub id: u64,
     pub owner: Team,
@@ -804,7 +804,7 @@ pub struct Unit {
     pub attack_timer: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BountyEvent {
     pub id: u64,
     pub team: Team,
@@ -816,7 +816,7 @@ pub struct BountyEvent {
     pub age: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchSnapshot {
     pub phase: MatchPhase,
     pub tick: u64,

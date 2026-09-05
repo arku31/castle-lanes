@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::window::{PrimaryWindow, WindowResolution};
 use castle_lanes::net::{
-    ClientPacket, DEFAULT_SERVER_ADDR, PROTOCOL_VERSION, ServerPacket, decode_server, encode,
+    ClientPacket, DEFAULT_SERVER_ADDR, GameId, GameInfo, PROTOCOL_VERSION, ServerPacket,
+    apply_snapshot_delta, decode_server, encode,
 };
 use castle_lanes::sim::{
     ArmorType, AttackType, BalanceConfig, BuildZone, Building, BuildingKind, Castle as SimCastle,
@@ -43,12 +44,15 @@ const VFX_Z: f32 = 32.0;
 struct ClientNet {
     socket: UdpSocket,
     server_addr: SocketAddr,
+    connected: bool,
+    game_id: Option<GameId>,
     player_id: Option<PlayerId>,
     team: Option<Team>,
     player_name: String,
     auto_ready: bool,
     auto_build_demo: bool,
     auto_race: RaceKind,
+    sent_auto_game: bool,
     sent_auto_race: bool,
     sent_auto_ready: bool,
     sent_auto_build: bool,
@@ -61,6 +65,7 @@ struct ClientNet {
 struct SnapshotState {
     snapshot: Option<MatchSnapshot>,
     balance: BalanceConfig,
+    games: Vec<GameInfo>,
 }
 
 #[derive(Resource)]
@@ -240,18 +245,21 @@ fn main() {
         .insert_resource(ClientNet {
             socket,
             server_addr: options.server_addr,
+            connected: false,
+            game_id: None,
             player_id: None,
             team: None,
             player_name: options.player_name,
             auto_ready: options.auto_ready,
             auto_build_demo: options.auto_build_demo,
             auto_race: options.auto_race,
+            sent_auto_game: false,
             sent_auto_race: false,
             sent_auto_ready: false,
             sent_auto_build: false,
             last_join: Instant::now() - Duration::from_secs(3),
             last_keepalive: Instant::now(),
-            status: "Press Enter to join the dedicated server.".to_string(),
+            status: "Press Enter to connect to the lobby server.".to_string(),
         })
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
@@ -407,10 +415,24 @@ fn receive_packets(mut net: ResMut<ClientNet>, mut state: ResMut<SnapshotState>)
     loop {
         match net.socket.recv_from(&mut buf) {
             Ok((len, _)) => match decode_server(&buf[..len]) {
-                Ok(ServerPacket::Welcome { player }) => {
+                Ok(ServerPacket::Connected { name }) => {
+                    net.connected = true;
+                    net.player_name = name;
+                    net.status = "Connected. Create a game or join one from the list.".to_string();
+                    send_client(&net, &ClientPacket::ListGames);
+                }
+                Ok(ServerPacket::Welcome { game_id, player }) => {
+                    net.game_id = Some(game_id);
                     net.player_id = Some(player.id);
                     net.team = Some(player.team);
-                    net.status = format!("Joined as {} ({:?}).", player.name, player.team);
+                    net.status = format!(
+                        "Joined game #{game_id} as {} ({:?}).",
+                        player.name, player.team
+                    );
+                    state.snapshot = None;
+                }
+                Ok(ServerPacket::GameList { games }) => {
+                    state.games = games;
                 }
                 Ok(ServerPacket::BalanceRaces {
                     starting_gold,
@@ -438,6 +460,13 @@ fn receive_packets(mut net: ResMut<ClientNet>, mut state: ResMut<SnapshotState>)
                 Ok(ServerPacket::Snapshot(snapshot)) => {
                     state.snapshot = Some(snapshot);
                 }
+                Ok(ServerPacket::SnapshotDelta(delta)) => {
+                    if let Some(snapshot) = &mut state.snapshot {
+                        apply_snapshot_delta(snapshot, delta);
+                    } else {
+                        net.status = "Waiting for baseline snapshot.".to_string();
+                    }
+                }
                 Ok(ServerPacket::Error { message }) => {
                     net.status = message;
                 }
@@ -453,15 +482,29 @@ fn receive_packets(mut net: ResMut<ClientNet>, mut state: ResMut<SnapshotState>)
         }
     }
 
-    if net.player_id.is_none() && net.last_join.elapsed() > Duration::from_secs(2) {
+    if !net.connected && net.last_join.elapsed() > Duration::from_secs(2) {
         send_join(&mut net);
-    } else if net.player_id.is_some() && net.last_keepalive.elapsed() > Duration::from_secs(2) {
+    } else if net.connected && net.last_keepalive.elapsed() > Duration::from_secs(2) {
         send_join(&mut net);
         net.last_keepalive = Instant::now();
     }
 }
 
 fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotState>) {
+    if net.connected
+        && net.player_id.is_none()
+        && !net.sent_auto_game
+        && (net.auto_ready || net.auto_build_demo)
+    {
+        send_client(
+            &net,
+            &ClientPacket::CreateGame {
+                name: format!("{}'s Game", net.player_name),
+            },
+        );
+        net.sent_auto_game = true;
+        return;
+    }
     let Some(player_id) = net.player_id else {
         return;
     };
@@ -522,9 +565,60 @@ fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotState>) {
     net.sent_auto_build = true;
 }
 
-fn menu_and_lobby_input(keys: Res<ButtonInput<KeyCode>>, mut net: ResMut<ClientNet>) {
+fn menu_and_lobby_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut net: ResMut<ClientNet>,
+    mut state: ResMut<SnapshotState>,
+) {
     if keys.just_pressed(KeyCode::Enter) {
-        send_join(&mut net);
+        if !net.connected {
+            send_join(&mut net);
+        } else if net.player_id.is_none() {
+            send_client(
+                &net,
+                &ClientPacket::CreateGame {
+                    name: format!("{}'s Game", net.player_name),
+                },
+            );
+        }
+    }
+    if net.connected && net.player_id.is_none() {
+        if keys.just_pressed(KeyCode::KeyC) {
+            send_client(
+                &net,
+                &ClientPacket::CreateGame {
+                    name: format!("{}'s Game", net.player_name),
+                },
+            );
+        }
+        if keys.just_pressed(KeyCode::KeyL) {
+            send_client(&net, &ClientPacket::ListGames);
+        }
+        for (key, idx) in [
+            (KeyCode::Digit1, 0),
+            (KeyCode::Digit2, 1),
+            (KeyCode::Digit3, 2),
+            (KeyCode::Digit4, 3),
+            (KeyCode::Digit5, 4),
+        ] {
+            if keys.just_pressed(key) {
+                if let Some(game) = state.games.get(idx) {
+                    send_client(&net, &ClientPacket::JoinGame { game_id: game.id });
+                }
+            }
+        }
+    }
+    if keys.just_pressed(KeyCode::Escape) && net.player_id.is_some() {
+        send_client(&net, &ClientPacket::LeaveGame);
+        net.game_id = None;
+        net.player_id = None;
+        net.team = None;
+        state.snapshot = None;
+        net.sent_auto_game = false;
+        net.sent_auto_race = false;
+        net.sent_auto_ready = false;
+        net.sent_auto_build = false;
+        send_client(&net, &ClientPacket::ListGames);
     }
     if keys.just_pressed(KeyCode::KeyR) {
         if let Some(player_id) = net.player_id {
@@ -582,6 +676,29 @@ fn ui_mouse_input(
     let Some(screen) = cursor_screen_pos(&windows) else {
         return;
     };
+
+    if net.connected && net.player_id.is_none() {
+        if point_in_rect(screen, lobby_create_button_center(), lobby_button_size()) {
+            send_client(
+                &net,
+                &ClientPacket::CreateGame {
+                    name: format!("{}'s Game", net.player_name),
+                },
+            );
+            return;
+        }
+        if point_in_rect(screen, lobby_refresh_button_center(), lobby_button_size()) {
+            send_client(&net, &ClientPacket::ListGames);
+            return;
+        }
+        for (idx, game) in state.games.iter().take(5).enumerate() {
+            if point_in_rect(screen, lobby_game_row_center(idx), lobby_game_row_size()) {
+                send_client(&net, &ClientPacket::JoinGame { game_id: game.id });
+                return;
+            }
+        }
+        return;
+    }
 
     if race_selection_popup_open(&state, &net) {
         if let (Some(snapshot), Some(player_id)) = (&state.snapshot, net.player_id) {
@@ -1295,6 +1412,12 @@ fn redraw_game_ui(
     let race_popup_open = race_selection_popup_open(&state, &net);
     spawn_top_hud(&mut commands, &state, &net, &balance, &phase_line);
 
+    if state.snapshot.is_none() {
+        spawn_bottom_console(&mut commands);
+        spawn_lobby_browser(&mut commands, &state, &net);
+        return;
+    }
+
     spawn_bottom_console(&mut commands);
 
     if let Some(snapshot) = &state.snapshot {
@@ -1509,6 +1632,167 @@ fn spawn_resource_chip(commands: &mut Commands, pos: Vec2, label: &str, value: &
         Anchor::TOP_RIGHT,
         Justify::Right,
     );
+}
+
+fn spawn_lobby_browser(commands: &mut Commands, state: &SnapshotState, net: &ClientNet) {
+    spawn_ui_panel(
+        commands,
+        Vec2::new(0.0, 68.0),
+        Vec2::new(540.0, 360.0),
+        48.0,
+    );
+    spawn_ui_label(
+        commands,
+        "Game Lobby",
+        Vec2::new(0.0, 210.0),
+        30.0,
+        TEXT_GOLD,
+        51.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+    let status = if net.connected {
+        format!("Connected as {}  |  {}", net.player_name, net.status)
+    } else {
+        format!("{}  |  {}", net.server_addr, net.status)
+    };
+    spawn_ui_label(
+        commands,
+        &truncate_text(&status, 72),
+        Vec2::new(0.0, 174.0),
+        13.0,
+        TEXT_PARCHMENT,
+        51.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+
+    spawn_ui_button_layer(
+        commands,
+        lobby_create_button_center(),
+        lobby_button_size(),
+        Color::srgba(0.18, 0.12, 0.07, 0.96),
+        false,
+        51.0,
+    );
+    spawn_ui_label(
+        commands,
+        "CREATE GAME",
+        lobby_create_button_center() + Vec2::new(0.0, -2.0),
+        15.0,
+        TEXT_GOLD,
+        54.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+    spawn_ui_button_layer(
+        commands,
+        lobby_refresh_button_center(),
+        lobby_button_size(),
+        Color::srgba(0.11, 0.13, 0.10, 0.96),
+        false,
+        51.0,
+    );
+    spawn_ui_label(
+        commands,
+        "REFRESH",
+        lobby_refresh_button_center() + Vec2::new(0.0, -2.0),
+        15.0,
+        TEXT_PARCHMENT,
+        54.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+
+    spawn_ui_label(
+        commands,
+        "Available Games",
+        Vec2::new(-214.0, 100.0),
+        15.0,
+        TEXT_PARCHMENT,
+        51.0,
+        Anchor::CENTER_LEFT,
+        Justify::Left,
+    );
+
+    if state.games.is_empty() {
+        spawn_ui_label(
+            commands,
+            "No open games. Create one to host.",
+            Vec2::new(0.0, 40.0),
+            15.0,
+            Color::srgba(0.78, 0.72, 0.58, 0.9),
+            51.0,
+            Anchor::CENTER,
+            Justify::Center,
+        );
+    }
+
+    for (idx, game) in state.games.iter().take(5).enumerate() {
+        let center = lobby_game_row_center(idx);
+        spawn_ui_button_layer(
+            commands,
+            center,
+            lobby_game_row_size(),
+            Color::srgba(0.065, 0.060, 0.050, 0.96),
+            false,
+            51.0,
+        );
+        let label = format!(
+            "{}. {}    {}/{}    {:?}",
+            idx + 1,
+            truncate_text(&game.name, 24),
+            game.players,
+            game.max_players,
+            game.phase
+        );
+        spawn_ui_label(
+            commands,
+            &label,
+            center + Vec2::new(-214.0, -2.0),
+            14.0,
+            TEXT_PARCHMENT,
+            54.0,
+            Anchor::CENTER_LEFT,
+            Justify::Left,
+        );
+    }
+
+    let hint = if net.connected {
+        "Enter/C: create  |  1-5/click: join  |  L: refresh"
+    } else {
+        "Enter: connect to server"
+    };
+    spawn_ui_label(
+        commands,
+        hint,
+        Vec2::new(0.0, -80.0),
+        13.0,
+        Color::srgba(0.76, 0.66, 0.48, 0.95),
+        51.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+}
+
+fn lobby_create_button_center() -> Vec2 {
+    Vec2::new(-82.0, 136.0)
+}
+
+fn lobby_refresh_button_center() -> Vec2 {
+    Vec2::new(112.0, 136.0)
+}
+
+fn lobby_button_size() -> Vec2 {
+    Vec2::new(164.0, 38.0)
+}
+
+fn lobby_game_row_center(idx: usize) -> Vec2 {
+    Vec2::new(0.0, 66.0 - idx as f32 * 38.0)
+}
+
+fn lobby_game_row_size() -> Vec2 {
+    Vec2::new(460.0, 32.0)
 }
 
 fn spawn_bottom_console(commands: &mut Commands) {
@@ -2877,9 +3161,14 @@ fn lane_world_y(lane: Lane) -> f32 {
 
 fn ui_summary(state: &SnapshotState, net: &ClientNet) -> (String, String, String) {
     let Some(snapshot) = &state.snapshot else {
+        let prompt = if net.connected {
+            "Create or join a game".to_string()
+        } else {
+            "Press Enter to connect".to_string()
+        };
         return (
-            "No match snapshot".to_string(),
-            "Press Enter to join".to_string(),
+            "Server Lobby".to_string(),
+            prompt,
             format!("{}\nStart the dedicated server if needed.", net.status),
         );
     };
