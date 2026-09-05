@@ -1,6 +1,10 @@
 # Castle Lanes — Path to a Really Good Game
 
-Status: **Phase 0 COMPLETE** and **Phase 1 partially complete** (implemented & committed 2026-09-05).
+Status: **Phase 0 COMPLETE, Phase 1 COMPLETE (all 10 items), Phase 2 items 1-3 + 5-pilot + 8 + UI pass COMPLETE.**
+60 commits, 45 lib + 3 integration + 2 binary tests green, working tree clean.
+The critical Bevy asset-path fix made art render for the first time (verified via screenshots).
+13/26 sprite atlases done; auto-resume completes the rest at 2:26 AM.
+Grove-vs-Vanguard balance is structural — needs human playtest input (iteration 2 hypotheses in docs/balance-report.md).
 
 Phase 0 (all items): determinism + `sim_balance` harness, besieged regen + sudden-death ramp (`docs/balance-report.md`), persistent/interpolated rendering, team accent colors, procedural audio, help overlay + hints + counter tooltips, lightyear removed.
 
