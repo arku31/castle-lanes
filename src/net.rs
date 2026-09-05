@@ -266,9 +266,7 @@ pub fn filter_snapshot_for_viewer(
     seen_enemy_buildings
         .retain(|id, _| snapshot.buildings.iter().any(|building| building.id == *id));
 
-    filtered
-        .bounty_events
-        .retain(|event| event.team == viewer);
+    filtered.bounty_events.retain(|event| event.team == viewer);
     filtered
 }
 
@@ -569,7 +567,11 @@ mod tests {
         sim.units[1].pos = crate::sim::lane_position(Lane::Top, 95.0);
         let stale = sim.snapshot();
         let stale = filter_snapshot_for_viewer(&stale, Some(Team::Left), &mut seen);
-        assert_eq!(stale.buildings.len(), 2, "seen building stays as stale copy");
+        assert_eq!(
+            stale.buildings.len(),
+            2,
+            "seen building stays as stale copy"
+        );
         assert!(!stale.units.iter().any(|unit| unit.id == 901));
 
         // No viewer: nothing leaks.
@@ -577,7 +579,8 @@ mod tests {
         assert!(empty.units.is_empty() && empty.buildings.is_empty());
 
         // Destroyed buildings are pruned from the seen set.
-        sim.buildings.retain(|building| building.owner == Team::Left);
+        sim.buildings
+            .retain(|building| building.owner == Team::Left);
         let destroyed = sim.snapshot();
         let destroyed = filter_snapshot_for_viewer(&destroyed, Some(Team::Left), &mut seen);
         assert_eq!(destroyed.buildings.len(), 1);

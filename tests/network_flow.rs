@@ -122,9 +122,7 @@ fn dedicated_server_runs_two_player_building_flow() {
         &mut left_snapshot,
         Duration::from_secs(3),
         "own building visible and enemy building fogged",
-        |snapshot| {
-            snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == left_player.team
-        },
+        |snapshot| snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == left_player.team,
     );
     wait_for_snapshot(
         &right,

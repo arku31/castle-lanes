@@ -520,11 +520,8 @@ fn broadcast_room_snapshot(
             .player_id
             .and_then(|player_id| room.sim.player(player_id))
             .map(|player| player.team);
-        let visible = filter_snapshot_for_viewer(
-            &current,
-            viewer,
-            &mut session.seen_enemy_buildings,
-        );
+        let visible =
+            filter_snapshot_for_viewer(&current, viewer, &mut session.seen_enemy_buildings);
         let needs_baseline = session
             .last_snapshot
             .as_ref()
