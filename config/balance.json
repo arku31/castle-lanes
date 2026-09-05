@@ -919,8 +919,8 @@
       "kind": "VanguardArbalester",
       "name": "Arbalester",
       "label": "A",
-      "max_health": 90,
-      "damage": 30,
+      "max_health": 160,
+      "damage": 34,
       "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Pierce",
@@ -928,7 +928,7 @@
       "armor_type": "Light",
       "attack_range": 15.0,
       "speed": 3.0,
-      "attack_interval": 2.6
+      "attack_interval": 2.2
     },
     {
       "kind": "VanguardArcanist",
@@ -968,8 +968,8 @@
       "kind": "GroveSpitefang",
       "name": "Spitefang",
       "label": "S",
-      "max_health": 110,
-      "damage": 20,
+      "max_health": 95,
+      "damage": 17,
       "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Normal",
@@ -981,8 +981,8 @@
       "ability": {
         "type": "berserk",
         "below_health_fraction": 0.4,
-        "speed_multiplier": 1.6,
-        "attack_speed_multiplier": 1.4
+        "speed_multiplier": 1.45,
+        "attack_speed_multiplier": 1.3
       }
     },
     {
