@@ -23,6 +23,7 @@ const UNIT_SEPARATION_PADDING: f32 = 0.08;
 const SPAWN_SEARCH_RINGS: i32 = 8;
 const BUILDING_FOOTPRINT_RADIUS: f32 = 4.6;
 const CASTLE_FOOTPRINT_RADIUS: f32 = 5.0;
+pub const DEFAULT_SIM_SEED: u64 = 0xC057_1A4E_5EED;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u8);
@@ -509,6 +510,15 @@ fn next_random_u32(state: &mut u64) -> u32 {
     (*state >> 32) as u32
 }
 
+fn mix_seed(seed: u64) -> u64 {
+    // splitmix64 finalizer so structurally similar seeds (small counters) spread
+    // across the full LCG state instead of producing correlated matches.
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 impl UnitKind {
     pub fn race_like(self) -> RaceKind {
         match self {
@@ -822,6 +832,8 @@ pub struct MatchSnapshot {
     pub tick: u64,
     pub elapsed_secs: f32,
     pub sudden_death: bool,
+    #[serde(default)]
+    pub seed: u64,
     pub players: Vec<PlayerInfo>,
     pub economies: [Economy; 2],
     pub castles: [Castle; 2],
@@ -846,6 +858,7 @@ pub struct GameSim {
     pub message: String,
     pub balance: BalanceConfig,
     next_id: u64,
+    seed: u64,
     rng_state: u64,
     income_timer: f32,
     elapsed_secs: f32,
@@ -861,6 +874,10 @@ impl Default for GameSim {
 
 impl GameSim {
     pub fn new(balance: BalanceConfig) -> Self {
+        Self::with_seed(balance, DEFAULT_SIM_SEED)
+    }
+
+    pub fn with_seed(balance: BalanceConfig, seed: u64) -> Self {
         let starting_economy = Economy {
             gold: balance.starting_gold,
             income: balance.base_income,
@@ -893,12 +910,17 @@ impl GameSim {
             message: "Waiting for two players.".to_string(),
             balance,
             next_id: 1,
-            rng_state: 0xC057_1A4E_5EED,
+            seed,
+            rng_state: mix_seed(seed),
             income_timer,
             elapsed_secs: 0.0,
             castle_regen_accum: [0.0, 0.0],
             overtime_damage_accum: [0.0, 0.0],
         }
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     pub fn snapshot(&self) -> MatchSnapshot {
@@ -907,6 +929,7 @@ impl GameSim {
             tick: self.tick,
             elapsed_secs: self.elapsed_secs,
             sudden_death: self.sudden_death(),
+            seed: self.seed,
             players: self.players.clone(),
             economies: self.economies.clone(),
             castles: self.castles.clone(),
@@ -1203,6 +1226,7 @@ impl GameSim {
         self.winner = None;
         self.income_timer = self.balance.income_interval;
         self.elapsed_secs = 0.0;
+        self.rng_state = mix_seed(self.seed);
         self.castle_regen_accum = [0.0, 0.0];
         self.overtime_damage_accum = [0.0, 0.0];
     }
@@ -1280,20 +1304,20 @@ impl GameSim {
 
     fn tick_units(&mut self, dt: f32) {
         let mut rng_state = self.rng_state;
-        let positions: HashMap<u64, (Team, Lane, f32, WorldPos, i32, ArmorType)> = self
+        // Ordered by the units Vec (spawn order), never a hash map: equal-distance
+        // target ties below must break by id so the sim stays deterministic.
+        let positions: Vec<(u64, Team, Lane, f32, WorldPos, i32, ArmorType)> = self
             .units
             .iter()
             .map(|u| {
                 (
                     u.id,
-                    (
-                        u.owner,
-                        u.lane,
-                        u.lane_pos,
-                        u.pos,
-                        u.health,
-                        self.balance.unit(u.kind).armor_type,
-                    ),
+                    u.owner,
+                    u.lane,
+                    u.lane_pos,
+                    u.pos,
+                    u.health,
+                    self.balance.unit(u.kind).armor_type,
                 )
             })
             .collect();
@@ -1306,12 +1330,12 @@ impl GameSim {
             unit.attack_timer = (unit.attack_timer - dt).max(0.0);
             let unit_target = positions
                 .iter()
-                .filter(|(_, (team, lane, lane_pos, _, health, _))| {
+                .filter(|(_, team, lane, lane_pos, _, health, _)| {
                     *team != unit.owner
                         && *health > 0
                         && unit_lanes_connected(unit.lane, unit.lane_pos, *lane, *lane_pos)
                 })
-                .map(|(id, (_, lane, lane_pos, pos, _, armor))| {
+                .map(|(id, _, lane, lane_pos, pos, _, armor)| {
                     (
                         *id,
                         unit_combat_distance(unit.lane, unit.pos, *lane, *lane_pos, *pos),
@@ -1319,7 +1343,7 @@ impl GameSim {
                     )
                 })
                 .filter(|(_, distance, _)| *distance <= unit_config.attack_range)
-                .min_by(|a, b| a.1.total_cmp(&b.1));
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
 
             let building_target = self
                 .buildings
@@ -1718,6 +1742,68 @@ mod tests {
         cell: GridCell,
     ) -> Result<(), String> {
         sim.place_building(player, kind, Lane::Top, BuildZone::Front, cell)
+    }
+
+    fn scripted_fight_snapshot(seed: u64, ticks: usize) -> MatchSnapshot {
+        let mut sim = GameSim::with_seed(BalanceConfig::default(), seed);
+        let left = sim.join_or_update_player("Alice".to_string()).unwrap().id;
+        let right = sim.join_or_update_player("Bryn".to_string()).unwrap().id;
+        sim.set_race(left, RaceKind::Vanguard).unwrap();
+        sim.set_race(right, RaceKind::Grove).unwrap();
+        sim.set_ready(left, true).unwrap();
+        sim.set_ready(right, true).unwrap();
+        assert_eq!(sim.phase, MatchPhase::Playing);
+
+        // Mirror a small build into both lanes so waves meet, fight, roll
+        // damage variance, and contest the castle junctions.
+        let left_builds = [
+            (BuildingKind::VanguardBarracks, GridCell { x: 0, y: 0 }),
+            (BuildingKind::VanguardRangeTower, GridCell { x: 1, y: 2 }),
+            (BuildingKind::VanguardForge, GridCell { x: 0, y: 4 }),
+            (BuildingKind::VanguardBarracks, GridCell { x: 2, y: 0 }),
+        ];
+        let right_builds = [
+            (BuildingKind::GroveRootDen, GridCell { x: 0, y: 0 }),
+            (BuildingKind::GroveThornSpire, GridCell { x: 1, y: 2 }),
+            (BuildingKind::GroveBloomWell, GridCell { x: 0, y: 4 }),
+            (BuildingKind::GroveRootDen, GridCell { x: 2, y: 0 }),
+        ];
+        let dt = 1.0 / 30.0;
+        for step in 0..ticks {
+            if step % 300 == 0 {
+                let build_index = (step / 300) % left_builds.len();
+                for lane in [Lane::Top, Lane::Bottom] {
+                    let (kind, cell) = left_builds[build_index];
+                    let _ = sim.place_building(left, kind, lane, BuildZone::Front, cell);
+                    let (kind, cell) = right_builds[build_index];
+                    let _ = sim.place_building(right, kind, lane, BuildZone::Front, cell);
+                }
+            }
+            sim.tick(dt);
+        }
+        sim.snapshot()
+    }
+
+    #[test]
+    fn identical_seeds_and_commands_produce_identical_snapshots() {
+        let a = scripted_fight_snapshot(777, 3600);
+        let b = scripted_fight_snapshot(777, 3600);
+        assert_eq!(a, b);
+        assert!(
+            a.units.len() > 3,
+            "scripted match should have a live steady-state wave, units: {}",
+            a.units.len()
+        );
+    }
+
+    #[test]
+    fn different_seeds_diverge_in_combat() {
+        let a = scripted_fight_snapshot(1, 3600);
+        let b = scripted_fight_snapshot(2, 3600);
+        assert_ne!(
+            a.units, b.units,
+            "separate matches must play out differently"
+        );
     }
 
     fn test_unit(

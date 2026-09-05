@@ -8,7 +8,7 @@ use std::env;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const TICK_RATE: Duration = Duration::from_millis(33);
 const SNAPSHOT_RATE: Duration = Duration::from_millis(100);
@@ -164,10 +164,11 @@ fn handle_packet(
             let game_id = *next_game_id;
             *next_game_id += 1;
             let room_name = clean_game_name(name, game_id);
+            let seed = room_seed(game_id);
             let mut room = GameRoom {
                 id: game_id,
                 name: room_name,
-                sim: GameSim::new(balance.clone()),
+                sim: GameSim::with_seed(balance.clone(), seed),
                 clients: HashSet::new(),
             };
             join_room(socket, clients, addr, &mut room, balance)?;
@@ -226,6 +227,14 @@ fn handle_packet(
         }
     }
     Ok(())
+}
+
+fn room_seed(game_id: GameId) -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    game_id as u64 ^ nanos.rotate_left(32)
 }
 
 fn touch_lobby(
