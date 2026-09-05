@@ -282,11 +282,7 @@ fn run_match(
             }
         }
         for building in &sim.buildings {
-            let is_upgrade = sim
-                .balance
-                .building(building.kind)
-                .upgraded_from
-                .is_some();
+            let is_upgrade = sim.balance.building(building.kind).upgraded_from.is_some();
             if is_upgrade && counted_upgrades.insert(building.id) {
                 *upgrades_by_kind.entry(building.kind).or_insert(0) += 1;
             }
@@ -344,11 +340,7 @@ impl SideBot {
             .collect();
         for building_id in owned {
             let (kind, gold) = {
-                let building = match sim
-                    .buildings
-                    .iter()
-                    .find(|b| b.id == building_id)
-                {
+                let building = match sim.buildings.iter().find(|b| b.id == building_id) {
                     Some(b) => b,
                     None => continue,
                 };
@@ -362,7 +354,12 @@ impl SideBot {
                 let last = LAST.load(std::sync::atomic::Ordering::Relaxed);
                 if sec != last
                     && LAST
-                        .compare_exchange(last, sec, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed)
+                        .compare_exchange(
+                            last,
+                            sec,
+                            std::sync::atomic::Ordering::Relaxed,
+                            std::sync::atomic::Ordering::Relaxed,
+                        )
                         .is_ok()
                 {
                     eprintln!(
@@ -374,9 +371,7 @@ impl SideBot {
                         config
                             .upgrades
                             .iter()
-                            .map(|branch| {
-                                sim.balance.building(*branch).cost - config.cost
-                            })
+                            .map(|branch| { sim.balance.building(*branch).cost - config.cost })
                             .collect::<Vec<_>>()
                     );
                 }
@@ -410,10 +405,8 @@ impl SideBot {
                     let branch_config = sim.balance.building(*branch);
                     let unit = branch_config.spawned_unit?;
                     let unit_config = sim.balance.unit(unit);
-                    let mut score = attack_multiplier(
-                        unit_config.attack_type,
-                        ARMOR_ORDER[dominant],
-                    ) * 10.0;
+                    let mut score =
+                        attack_multiplier(unit_config.attack_type, ARMOR_ORDER[dominant]) * 10.0;
                     let swarmy = enemy_units.len() >= 10;
                     if swarmy
                         && matches!(
@@ -503,11 +496,7 @@ impl SideBot {
                     }
                 }
             }
-            if cheapest == i32::MAX {
-                0
-            } else {
-                cheapest
-            }
+            if cheapest == i32::MAX { 0 } else { cheapest }
         };
         let slot = self.team.slot();
         let race = match sim.player(self.player).and_then(|player| player.race) {
@@ -561,38 +550,46 @@ impl SideBot {
                         .map(|(index, _)| index)
                         .unwrap_or(0);
                     let swarmy = enemy_units.len() >= 10;
-                    let best = producers
-                        .iter()
-                        .rev()
-                        .filter(|o| o.1 <= spendable)
-                        .max_by(|a, b| {
-                            let score = |o: &BuildingOption| -> f32 {
-                                let config = sim.balance.unit(o.2.unwrap());
-                                let mut value =
-                                    attack_multiplier(config.attack_type, ARMOR_ORDER[dominant])
-                                        * 10.0;
-                                if swarmy
-                                    && matches!(
-                                        config.ability,
-                                        Some(castle_lanes::sim::AbilityConfig::Splash { .. })
-                                    )
-                                {
-                                    value += 8.0;
-                                }
-                                value
-                            };
-                            score(a).total_cmp(&score(b))
-                        });
+                    let best =
+                        producers
+                            .iter()
+                            .rev()
+                            .filter(|o| o.1 <= spendable)
+                            .max_by(|a, b| {
+                                let score = |o: &BuildingOption| -> f32 {
+                                    let config = sim.balance.unit(o.2.unwrap());
+                                    let mut value = attack_multiplier(
+                                        config.attack_type,
+                                        ARMOR_ORDER[dominant],
+                                    ) * 10.0;
+                                    if swarmy
+                                        && matches!(
+                                            config.ability,
+                                            Some(castle_lanes::sim::AbilityConfig::Splash { .. })
+                                        )
+                                    {
+                                        value += 8.0;
+                                    }
+                                    value
+                                };
+                                score(a).total_cmp(&score(b))
+                            });
                     (best, BuildZone::Front)
                 }
                 Archetype::Mixed => {
                     if econ_count * 3 < producer_count + 1 {
-                        (econ.iter().rev().find(|o| o.1 <= spendable), BuildZone::Back)
+                        (
+                            econ.iter().rev().find(|o| o.1 <= spendable),
+                            BuildZone::Back,
+                        )
                     } else {
                         // Rotate through the producer roster cost-ascending so
                         // unit-usage stats exercise every building.
-                        let affordable: Vec<_> =
-                            producers.iter().rev().filter(|o| o.1 <= spendable).collect();
+                        let affordable: Vec<_> = producers
+                            .iter()
+                            .rev()
+                            .filter(|o| o.1 <= spendable)
+                            .collect();
                         // Prefer bases that can branch-upgrade: keeps the
                         // upgrade pipeline exercised in telemetry.
                         let mut ordered = affordable;
@@ -625,7 +622,10 @@ impl SideBot {
                 }
                 Archetype::Econ => {
                     if econ_count * 2 < producer_count + 1 {
-                        (econ.iter().rev().find(|o| o.1 <= spendable), BuildZone::Back)
+                        (
+                            econ.iter().rev().find(|o| o.1 <= spendable),
+                            BuildZone::Back,
+                        )
                     } else {
                         (
                             producers.iter().rev().find(|o| o.1 <= spendable),

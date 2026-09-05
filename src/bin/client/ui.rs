@@ -138,8 +138,19 @@ pub(crate) fn redraw_game_ui(
 
 /// Settings panel: volume, mute, fullscreen, resolution - all persisted to
 /// config/client_settings.json (plan.md Phase 1 item 10).
-pub(crate) fn spawn_settings_overlay(commands: &mut Commands, settings: &ClientSettings, fonts: &FontAssets) {
-    spawn_ui_title(commands, fonts, "SETTINGS", Vec2::new(0.0, 148.0), 20.0, 61.5);
+pub(crate) fn spawn_settings_overlay(
+    commands: &mut Commands,
+    settings: &ClientSettings,
+    fonts: &FontAssets,
+) {
+    spawn_ui_title(
+        commands,
+        fonts,
+        "SETTINGS",
+        Vec2::new(0.0, 148.0),
+        20.0,
+        61.5,
+    );
     spawn_ui_rect(
         commands,
         Vec2::ZERO,
@@ -243,7 +254,14 @@ pub(crate) fn spawn_match_hint(
 }
 
 pub(crate) fn spawn_help_overlay(commands: &mut Commands, fonts: &FontAssets) {
-    spawn_ui_title(commands, fonts, "CASTLE LANES - HOW TO PLAY", Vec2::new(0.0, 244.0), 22.0, 61.5);
+    spawn_ui_title(
+        commands,
+        fonts,
+        "CASTLE LANES - HOW TO PLAY",
+        Vec2::new(0.0, 244.0),
+        22.0,
+        61.5,
+    );
     spawn_ui_rect(
         commands,
         Vec2::ZERO,
@@ -1615,6 +1633,9 @@ pub(crate) fn spawn_ui_button_layer(
     selected: bool,
     z: f32,
 ) {
+    // Texture pass (plan.md Phase 2 item 5/7): beveled metal button - outer
+    // frame, raised face with a top-light/bottom-shade bevel, gold corner
+    // studs, and a stronger selected ring.
     spawn_ui_rect(
         commands,
         pos,
@@ -1623,11 +1644,29 @@ pub(crate) fn spawn_ui_button_layer(
         z,
     );
     spawn_ui_rect(commands, pos, size - Vec2::splat(5.0), color, z + 1.0);
+    if selected {
+        // brighten the face of the selected button
+        spawn_ui_rect(
+            commands,
+            pos,
+            size - Vec2::splat(5.0),
+            Color::srgba(1.0, 0.95, 0.75, 0.16),
+            z + 1.5,
+        );
+    }
+    // top bevel light + bottom shade
     spawn_ui_rect(
         commands,
-        Vec2::new(pos.x, pos.y + size.y * 0.5 - 8.0),
-        Vec2::new(size.x - 10.0, 2.0),
-        Color::srgba(0.95, 0.72, 0.32, 0.16),
+        Vec2::new(pos.x, pos.y - size.y * 0.5 + 4.0),
+        Vec2::new(size.x - 8.0, 2.5),
+        Color::srgba(1.0, 0.95, 0.78, 0.22),
+        z + 2.0,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(pos.x, pos.y + size.y * 0.5 - 5.0),
+        Vec2::new(size.x - 8.0, 2.5),
+        Color::srgba(0.0, 0.0, 0.0, 0.35),
         z + 2.0,
     );
     let edge = if selected {
@@ -1649,6 +1688,21 @@ pub(crate) fn spawn_ui_button_layer(
         edge,
         z + 2.0,
     );
+    // gold corner studs
+    for dx in [-1.0, 1.0] {
+        for dy in [-1.0, 1.0] {
+            spawn_ui_rect(
+                commands,
+                Vec2::new(
+                    pos.x + dx * (size.x * 0.5 - 5.0),
+                    pos.y + dy * (size.y * 0.5 - 5.0),
+                ),
+                Vec2::splat(5.0),
+                Color::srgba(0.9, 0.7, 0.3, 0.9),
+                z + 3.0,
+            );
+        }
+    }
 }
 
 pub(crate) fn spawn_ui_rect(commands: &mut Commands, pos: Vec2, size: Vec2, color: Color, z: f32) {

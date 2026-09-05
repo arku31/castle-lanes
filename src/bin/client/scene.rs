@@ -216,10 +216,8 @@ pub(crate) fn sync_units(
                     x = root.translation.x;
                     y = root.translation.y;
                 }
-                let mut corpse_sprite =
-                    Sprite::from_image(frames[4].clone());
-                corpse_sprite.custom_size =
-                    Some(unit_sprite_size(visual.kind));
+                let mut corpse_sprite = Sprite::from_image(frames[4].clone());
+                corpse_sprite.custom_size = Some(unit_sprite_size(visual.kind));
                 corpse_sprite.flip_x = visual.side == Team::Right;
                 commands.spawn((
                     corpse_sprite,

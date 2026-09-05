@@ -439,12 +439,12 @@ fn main() {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                title: format!("Castle Lanes v{}", castle_lanes::VERSION),
-                resolution: WindowResolution::new(1100, 720),
-                resizable: true,
-                ..default()
-            }),
-            ..default()
+                        title: format!("Castle Lanes v{}", castle_lanes::VERSION),
+                        resolution: WindowResolution::new(1100, 720),
+                        resizable: true,
+                        ..default()
+                    }),
+                    ..default()
                 })
                 .set(AssetPlugin {
                     file_path: asset_file_path,
@@ -677,13 +677,11 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         ("vanguard_arbalester", UnitKind::VanguardArbalester),
     ];
     for (name, kind) in vanguard_frames {
-        let load = |index: usize| {
-            asset_server.load(format!("art/units/frames/{name}_frame{index}.png"))
-        };
-        frame_sets.frames.insert(
-            kind,
-            [load(0), load(1), load(2), load(3), load(4)],
-        );
+        let load =
+            |index: usize| asset_server.load(format!("art/units/frames/{name}_frame{index}.png"));
+        frame_sets
+            .frames
+            .insert(kind, [load(0), load(1), load(2), load(3), load(4)]);
     }
     commands.insert_resource(frame_sets);
     let ambient = AudioAssets {
