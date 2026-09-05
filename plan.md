@@ -13,11 +13,14 @@ Phase 1 progress:
 - [x] Pacing hardening — sudden death disables regen and adds flat escalation (8/min); passive
       one-building stalls that ran 20+ min now resolve (~8 min verified through the live server);
       demo bot builds continuously like a player
+- [x] Match recording (item 7) — src/record.rs; JSON per match under
+      recordings/ (seed + intent log + kills + 1 Hz timeline + result); verified
+      live through the server
+- [x] CI (item 9) — .github/workflows/ci.yml: fmt, check, serial tests,
+      release sim_perf + sim_balance smokes on push/PR
 - [ ] Binary encoding (item 4)
 - [ ] Client module refactor (item 8)
-- [ ] CI (item 9)
 - [ ] Settings panel (item 10)
-- [ ] Match recording (item 7)
 
 Screenshots for the README remain blocked: ZCode needs Screen Recording permission (System Settings → Privacy & Security → Screen Recording → grant to ZCode Computer Use, then restart ZCode).
 Original baseline: commit `a79f462` + working tree (landed as `469d93d`).
