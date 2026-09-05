@@ -1,6 +1,7 @@
 use castle_lanes::net::{
     ClientPacket, DEFAULT_SERVER_ADDR, GameId, GameInfo, PROTOCOL_VERSION, ServerPacket,
     SnapshotDelta, decode_client, diff_snapshot, encode, entityless_snapshot,
+    filter_snapshot_for_viewer,
 };
 use castle_lanes::sim::{BalanceConfig, DEFAULT_BALANCE_PATH, GameSim, MatchSnapshot, PlayerId};
 use std::collections::{HashMap, HashSet};
@@ -24,6 +25,9 @@ struct ClientSession {
     player_id: Option<PlayerId>,
     last_seen: Instant,
     last_snapshot: Option<MatchSnapshot>,
+    /// Enemy buildings this session has scouted; re-sent stale while the
+    /// client's fog memory should still show their silhouette.
+    seen_enemy_buildings: HashMap<u64, castle_lanes::sim::Building>,
 }
 
 struct GameRoom {
@@ -147,6 +151,7 @@ fn handle_packet(
                         player_id: None,
                         last_seen: Instant::now(),
                         last_snapshot: None,
+                        seen_enemy_buildings: HashMap::new(),
                     },
                 );
             };
@@ -285,6 +290,7 @@ fn join_room(
     session.game_id = Some(room.id);
     session.player_id = Some(player.id);
     session.last_snapshot = None;
+    session.seen_enemy_buildings.clear();
     session.last_seen = Instant::now();
     send_packet(
         socket,
@@ -317,6 +323,7 @@ fn leave_room(
         session.game_id = None;
         session.player_id = None;
         session.last_snapshot = None;
+        session.seen_enemy_buildings.clear();
     }
 }
 
@@ -418,28 +425,40 @@ fn broadcast_room_snapshot(
         let Some(session) = clients.get_mut(addr) else {
             continue;
         };
+        // Authoritative fog: each client only receives entities its side can
+        // see (plan.md Phase 1). The diff runs on the filtered snapshot so
+        // deltas stay consistent per client.
+        let viewer = session
+            .player_id
+            .and_then(|player_id| room.sim.player(player_id))
+            .map(|player| player.team);
+        let visible = filter_snapshot_for_viewer(
+            &current,
+            viewer,
+            &mut session.seen_enemy_buildings,
+        );
         let needs_baseline = session
             .last_snapshot
             .as_ref()
-            .map(|snapshot| snapshot.phase != current.phase)
+            .map(|snapshot| snapshot.phase != visible.phase)
             .unwrap_or(true);
 
         if needs_baseline {
-            send_entityless_baseline(socket, *addr, &current, room.sim.tick);
-            let mut empty = entityless_snapshot(&current);
+            send_entityless_baseline(socket, *addr, &visible, room.sim.tick);
+            let mut empty = entityless_snapshot(&visible);
             empty.tick = session
                 .last_snapshot
                 .as_ref()
                 .map(|snapshot| snapshot.tick)
                 .unwrap_or(0);
-            let mut delta = diff_snapshot(&empty, &current);
+            let mut delta = diff_snapshot(&empty, &visible);
             delta.clear_entities = true;
             send_delta_chunks(socket, *addr, delta, room.sim.tick);
         } else if let Some(previous) = &session.last_snapshot {
-            let delta = diff_snapshot(previous, &current);
+            let delta = diff_snapshot(previous, &visible);
             send_delta_chunks(socket, *addr, delta, room.sim.tick);
         }
-        session.last_snapshot = Some(current.clone());
+        session.last_snapshot = Some(visible);
     }
 }
 

@@ -111,13 +111,27 @@ fn dedicated_server_runs_two_player_building_flow() {
             cell: GridCell { x: 0, y: 0 },
         },
     );
+    let mut right_snapshot = None;
 
+    // Server-side fog (plan.md Phase 1): each side only receives its own
+    // building; the enemy building stays hidden until scouted.
     wait_for_snapshot(
         &left,
         &mut left_snapshot,
         Duration::from_secs(3),
-        "two buildings",
-        |snapshot| snapshot.buildings.len() == 2,
+        "own building visible and enemy building fogged",
+        |snapshot| {
+            snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == left_player.team
+        },
+    );
+    wait_for_snapshot(
+        &right,
+        &mut right_snapshot,
+        Duration::from_secs(3),
+        "right sees only its own building",
+        |snapshot| {
+            snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == right_player.team
+        },
     );
     let spawn_timeout = Duration::from_secs_f32(
         BalanceConfig::default()

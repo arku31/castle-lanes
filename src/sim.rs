@@ -25,6 +25,11 @@ const UNIT_SEPARATION_PADDING: f32 = 0.08;
 const SPAWN_SEARCH_RINGS: i32 = 8;
 const BUILDING_FOOTPRINT_RADIUS: f32 = 4.6;
 const CASTLE_FOOTPRINT_RADIUS: f32 = 5.0;
+// Vision radii in sim units; the authoritative server filters snapshots with
+// these so clients only receive entities their side can actually see.
+pub const VISION_CASTLE_RADIUS: f32 = 18.0;
+pub const VISION_BUILDING_RADIUS: f32 = 7.0;
+pub const VISION_UNIT_RADIUS: f32 = 8.0;
 pub const DEFAULT_SIM_SEED: u64 = 0xC057_1A4E_5EED;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -449,6 +454,35 @@ pub fn building_spawn_position(
 ) -> WorldPos {
     let building = building_position(team, lane, zone, cell);
     WorldPos::new(building.x + team.direction() * 2.0, building.y)
+}
+
+/// True when `pos` (sim space) lies inside the viewer side's current vision:
+/// every unit, building, and the castle belonging to `viewer` emits a vision
+/// circle. Side-based, so it survives player-count changes.
+pub fn position_revealed_to(
+    buildings: &[Building],
+    units: &[Unit],
+    viewer: Team,
+    pos: WorldPos,
+) -> bool {
+    let castle = lane_position(Lane::Top, viewer.castle_pos());
+    if castle.distance(pos) <= VISION_CASTLE_RADIUS {
+        return true;
+    }
+    for building in buildings.iter().filter(|building| building.owner == viewer) {
+        if building_position(building.owner, building.lane, building.zone, building.cell)
+            .distance(pos)
+            <= VISION_BUILDING_RADIUS
+        {
+            return true;
+        }
+    }
+    for unit in units.iter().filter(|unit| unit.owner == viewer) {
+        if unit.pos.distance(pos) <= VISION_UNIT_RADIUS {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn castle_junction(pos: f32) -> Option<Team> {

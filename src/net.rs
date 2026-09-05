@@ -198,6 +198,69 @@ impl SnapshotDelta {
     }
 }
 
+/// Filter a snapshot down to what one side is allowed to know (plan.md
+/// Phase 1): own entities always, enemy units only inside current vision,
+/// enemy buildings only if currently visible or seen before (sent stale so
+/// clients render tombstone silhouettes), and bounty events only for the
+/// viewer's own side. With no viewer (lobby), no entities are sent. The
+/// final snapshot of a match reveals everything.
+pub fn filter_snapshot_for_viewer(
+    snapshot: &MatchSnapshot,
+    viewer: Option<Team>,
+    seen_enemy_buildings: &mut HashMap<u64, crate::sim::Building>,
+) -> MatchSnapshot {
+    let mut filtered = snapshot.clone();
+    let Some(viewer) = viewer else {
+        filtered.units.clear();
+        filtered.buildings.clear();
+        filtered.bounty_events.clear();
+        return filtered;
+    };
+    if snapshot.phase == MatchPhase::GameOver {
+        seen_enemy_buildings.clear();
+        return filtered;
+    }
+
+    filtered.units.retain(|unit| {
+        unit.owner == viewer
+            || crate::sim::position_revealed_to(
+                &snapshot.buildings,
+                &snapshot.units,
+                viewer,
+                unit.pos,
+            )
+    });
+
+    let mut kept_buildings: Vec<crate::sim::Building> = Vec::new();
+    for building in &snapshot.buildings {
+        if building.owner == viewer {
+            kept_buildings.push(building.clone());
+            continue;
+        }
+        let position = crate::sim::building_position(
+            building.owner,
+            building.lane,
+            building.zone,
+            building.cell,
+        );
+        if crate::sim::position_revealed_to(&snapshot.buildings, &snapshot.units, viewer, position)
+        {
+            seen_enemy_buildings.insert(building.id, building.clone());
+            kept_buildings.push(building.clone());
+        } else if let Some(stale) = seen_enemy_buildings.get(&building.id) {
+            kept_buildings.push(stale.clone());
+        }
+    }
+    filtered.buildings = kept_buildings;
+    seen_enemy_buildings
+        .retain(|id, _| snapshot.buildings.iter().any(|building| building.id == *id));
+
+    filtered
+        .bounty_events
+        .retain(|event| event.team == viewer);
+    filtered
+}
+
 pub fn entityless_snapshot(snapshot: &MatchSnapshot) -> MatchSnapshot {
     let mut snapshot = snapshot.clone();
     snapshot.units.clear();
@@ -424,5 +487,89 @@ mod tests {
         sim.set_ready(left, true).unwrap();
         sim.set_ready(right, true).unwrap();
         sim
+    }
+
+    #[test]
+    fn filtering_hides_unseen_enemies_and_stales_seen_buildings() {
+        let mut sim = ready_two_players();
+        let left = sim.players[0].id;
+        let _ = left;
+        // Left barracks mid-top, right spire at right's home lane, units apart.
+        sim.place_building(
+            sim.players[0].id,
+            crate::sim::BuildingKind::VanguardBarracks,
+            Lane::Top,
+            crate::sim::BuildZone::Front,
+            crate::sim::GridCell { x: 0, y: 0 },
+        )
+        .unwrap();
+        sim.place_building(
+            sim.players[1].id,
+            crate::sim::BuildingKind::VanguardRangeTower,
+            Lane::Top,
+            crate::sim::BuildZone::Front,
+            crate::sim::GridCell { x: 0, y: 0 },
+        )
+        .unwrap();
+        sim.units.push(crate::sim::Unit {
+            id: 900,
+            owner: Team::Left,
+            kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
+            health: 100,
+            lane_pos: 50.0,
+            pos: crate::sim::lane_position(Lane::Top, 50.0),
+            velocity: crate::sim::WorldPos::new(0.0, 0.0),
+            radius: 0.65,
+            attack_timer: 0.0,
+        });
+        sim.units.push(crate::sim::Unit {
+            id: 901,
+            owner: Team::Right,
+            kind: UnitKind::VanguardGuard,
+            lane: Lane::Top,
+            health: 100,
+            lane_pos: 95.0,
+            pos: crate::sim::lane_position(Lane::Top, 95.0),
+            velocity: crate::sim::WorldPos::new(0.0, 0.0),
+            radius: 0.65,
+            attack_timer: 0.0,
+        });
+        let snapshot = sim.snapshot();
+        let mut seen = std::collections::HashMap::new();
+
+        let visible = filter_snapshot_for_viewer(&snapshot, Some(Team::Left), &mut seen);
+        // Own unit and own building present; enemy unit at 95 and unseen
+        // enemy building hidden.
+        assert!(visible.units.iter().any(|unit| unit.id == 900));
+        assert!(!visible.units.iter().any(|unit| unit.id == 901));
+        assert_eq!(visible.buildings.len(), 1);
+        assert!(visible.bounty_events.is_empty());
+
+        // Scout the enemy building: becomes visible, then stays stale after
+        // the scouting unit leaves.
+        sim.units[0].pos = crate::sim::lane_position(Lane::Top, 88.0);
+        let scouted = sim.snapshot();
+        let scouted = filter_snapshot_for_viewer(&scouted, Some(Team::Left), &mut seen);
+        assert_eq!(scouted.buildings.len(), 2);
+        assert!(scouted.units.iter().any(|unit| unit.id == 901));
+
+        sim.units[0].pos = crate::sim::lane_position(Lane::Top, 50.0);
+        sim.units[1].pos = crate::sim::lane_position(Lane::Top, 95.0);
+        let stale = sim.snapshot();
+        let stale = filter_snapshot_for_viewer(&stale, Some(Team::Left), &mut seen);
+        assert_eq!(stale.buildings.len(), 2, "seen building stays as stale copy");
+        assert!(!stale.units.iter().any(|unit| unit.id == 901));
+
+        // No viewer: nothing leaks.
+        let empty = filter_snapshot_for_viewer(&stale, None, &mut seen);
+        assert!(empty.units.is_empty() && empty.buildings.is_empty());
+
+        // Destroyed buildings are pruned from the seen set.
+        sim.buildings.retain(|building| building.owner == Team::Left);
+        let destroyed = sim.snapshot();
+        let destroyed = filter_snapshot_for_viewer(&destroyed, Some(Team::Left), &mut seen);
+        assert_eq!(destroyed.buildings.len(), 1);
+        assert!(seen.is_empty());
     }
 }
