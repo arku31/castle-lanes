@@ -563,7 +563,7 @@
       "name": "Guard",
       "label": "G",
       "max_health": 120,
-      "damage": 18,
+      "damage": 20,
       "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Normal",
@@ -736,7 +736,7 @@
       "attack_interval": 1.6,
       "ability": {
         "type": "regeneration",
-        "health_per_second": 3
+        "health_per_second": 5
       }
     },
     {
