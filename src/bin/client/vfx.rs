@@ -244,6 +244,34 @@ pub(crate) fn infer_attacker<'a>(
         .map(|(unit, _, _)| unit)
 }
 
+/// Animation-pass pilot (plan.md Phase 2 item 5, Vanguard only): ranged
+/// Vanguard attacks fire a visible bolt that flies from attacker to target.
+/// Purely cosmetic - the server's damage is already applied in the snapshot.
+fn spawn_projectile(commands: &mut Commands, from: Vec2, to: Vec2, attack_type: AttackType) {
+    let delta = to - from;
+    let distance = delta.length();
+    if distance < 8.0 {
+        return;
+    }
+    let speed = 700.0_f32;
+    let lifetime = (distance / speed).clamp(0.03, 0.5);
+    let velocity = delta / distance * speed;
+    let angle = delta.y.atan2(delta.x);
+    commands.spawn((
+        Sprite::from_color(
+            damage_number_color(attack_type, false),
+            Vec2::new(13.0, 2.0),
+        ),
+        Transform::from_xyz(from.x, from.y + 14.0, VFX_Z - 2.0)
+            .with_rotation(Quat::from_rotation_z(angle)),
+        CombatVfx {
+            lifetime,
+            max_lifetime: lifetime,
+            velocity,
+        },
+    ));
+}
+
 pub(crate) fn building_hit_pos(building: &Building, side: Team) -> Vec2 {
     cell_to_world(side, building.lane, building.zone, building.cell) + Vec2::new(0.0, 14.0)
 }

@@ -1375,12 +1375,7 @@ impl GameSim {
         let base_kind = self.buildings[index].kind;
         let base_name = self.balance.building(base_kind).name.clone();
         let base_cost = self.balance.building(base_kind).cost;
-        if !self
-            .balance
-            .building(base_kind)
-            .upgrades
-            .contains(&to)
-        {
+        if !self.balance.building(base_kind).upgrades.contains(&to) {
             return Err(format!(
                 "{} cannot be upgraded into {}.",
                 base_name,
@@ -3160,13 +3155,21 @@ mod tests {
     fn branch_upgrade_changes_production_and_charges_delta() {
         let mut sim = ready_two_players();
         let player = sim.players[0].id;
-        place_test_building(&mut sim, player, BuildingKind::VanguardRangeTower, GridCell { x: 0, y: 0 })
-            .unwrap();
+        place_test_building(
+            &mut sim,
+            player,
+            BuildingKind::VanguardRangeTower,
+            GridCell { x: 0, y: 0 },
+        )
+        .unwrap();
         let building_id = sim.buildings[0].id;
         sim.economies[0].gold += 500;
         let gold_before = sim.economies[0].gold;
         let base_cost = sim.balance.building(BuildingKind::VanguardRangeTower).cost;
-        let target_cost = sim.balance.building(BuildingKind::VanguardArbalestTower).cost;
+        let target_cost = sim
+            .balance
+            .building(BuildingKind::VanguardArbalestTower)
+            .cost;
 
         sim.upgrade_building(player, building_id, BuildingKind::VanguardArbalestTower)
             .unwrap();
@@ -3178,24 +3181,28 @@ mod tests {
         );
         assert_eq!(sim.buildings[0].health, sim.buildings[0].max_health);
         assert_eq!(
-            sim.balance
-                .building(sim.buildings[0].kind)
-                .spawned_unit,
+            sim.balance.building(sim.buildings[0].kind).spawned_unit,
             Some(UnitKind::VanguardArbalester)
         );
 
         // Wrong branch rejected.
-        assert!(sim
-            .upgrade_building(player, building_id, BuildingKind::GroveSpitefen)
-            .is_err());
+        assert!(
+            sim.upgrade_building(player, building_id, BuildingKind::GroveSpitefen)
+                .is_err()
+        );
     }
 
     #[test]
     fn upgraded_buildings_sell_at_upgraded_value() {
         let mut sim = ready_two_players();
         let player = sim.players[0].id;
-        place_test_building(&mut sim, player, BuildingKind::VanguardRangeTower, GridCell { x: 0, y: 0 })
-            .unwrap();
+        place_test_building(
+            &mut sim,
+            player,
+            BuildingKind::VanguardRangeTower,
+            GridCell { x: 0, y: 0 },
+        )
+        .unwrap();
         let building_id = sim.buildings[0].id;
         sim.economies[0].gold += 500;
         sim.upgrade_building(player, building_id, BuildingKind::VanguardArcaneSpire)

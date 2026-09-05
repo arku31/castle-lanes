@@ -311,8 +311,7 @@ fn handle_packet(
                 return Ok(());
             }
             let room = room_for_player(rooms, clients, addr, player_id)?;
-            room.sim
-                .upgrade_building(player_id, building_id, to)?;
+            room.sim.upgrade_building(player_id, building_id, to)?;
             room.recorder.record_command(
                 &room.sim,
                 player_id.0,
