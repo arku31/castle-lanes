@@ -3,7 +3,10 @@ use castle_lanes::net::{
     SnapshotDelta, decode_client, diff_snapshot, encode, entityless_snapshot,
     filter_snapshot_for_viewer,
 };
-use castle_lanes::sim::{BalanceConfig, DEFAULT_BALANCE_PATH, GameSim, MatchSnapshot, PlayerId};
+use castle_lanes::record::{write_record, MatchRecorder, RecordedIntent};
+use castle_lanes::sim::{
+    BalanceConfig, DEFAULT_BALANCE_PATH, GameSim, MatchPhase, MatchSnapshot, PlayerId,
+};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::ErrorKind;
@@ -42,6 +45,7 @@ struct GameRoom {
     name: String,
     sim: GameSim,
     clients: HashSet<SocketAddr>,
+    recorder: MatchRecorder,
 }
 
 fn main() -> std::io::Result<()> {
@@ -100,6 +104,20 @@ fn main() -> std::io::Result<()> {
         while now.duration_since(last_tick) >= TICK_RATE {
             for room in rooms.values_mut() {
                 room.sim.tick(TICK_RATE.as_secs_f32());
+                room.recorder.observe(&room.sim);
+                if let Some(record) = room.recorder.take_finished() {
+                    match write_record(&record) {
+                        Ok(path) => println!(
+                            "Game {} recorded: {} ({:.0}s, winner {:?}) -> {}",
+                            room.id,
+                            record.players.len(),
+                            record.duration_secs,
+                            record.winner,
+                            path.display()
+                        ),
+                        Err(err) => eprintln!("recording write failed: {err}"),
+                    }
+                }
             }
             last_tick += TICK_RATE;
         }
@@ -188,6 +206,7 @@ fn handle_packet(
                 name: room_name,
                 sim: GameSim::with_seed(balance.clone(), seed),
                 clients: HashSet::new(),
+                recorder: MatchRecorder::new(game_id),
             };
             join_room(socket, clients, addr, &mut room, balance)?;
             rooms.insert(game_id, room);
@@ -213,10 +232,13 @@ fn handle_packet(
         ClientPacket::SetReady { player_id, ready } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.set_ready(player_id, ready)?;
+            room.recorder.record_command(&room.sim, player_id.0, RecordedIntent::SetReady { ready });
         }
         ClientPacket::SetRace { player_id, race } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.set_race(player_id, race)?;
+            room.recorder
+                .record_command(&room.sim, player_id.0, RecordedIntent::SetRace { race });
         }
         ClientPacket::PlaceBuilding {
             player_id,
@@ -237,6 +259,16 @@ fn handle_packet(
             }
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.place_building(player_id, kind, lane, zone, cell)?;
+            room.recorder.record_command(
+                &room.sim,
+                player_id.0,
+                RecordedIntent::PlaceBuilding {
+                    kind,
+                    lane,
+                    zone,
+                    cell,
+                },
+            );
             if let Some(session) = clients.get_mut(&addr) {
                 session.last_applied_seq = seq;
             }
@@ -247,10 +279,14 @@ fn handle_packet(
         ClientPacket::VoteRematch { player_id } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.vote_rematch(player_id);
+            room.recorder
+                .record_command(&room.sim, player_id.0, RecordedIntent::VoteRematch);
         }
         ClientPacket::Surrender { player_id } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.surrender(player_id)?;
+            room.recorder
+                .record_command(&room.sim, player_id.0, RecordedIntent::Surrender);
         }
         ClientPacket::SellBuilding {
             player_id,
@@ -267,6 +303,11 @@ fn handle_packet(
             }
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.sell_building(player_id, building_id)?;
+            room.recorder.record_command(
+                &room.sim,
+                player_id.0,
+                RecordedIntent::SellBuilding { building_id },
+            );
             if let Some(session) = clients.get_mut(&addr) {
                 session.last_applied_seq = seq;
             }
