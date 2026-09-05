@@ -193,6 +193,7 @@ struct CombatTracker {
 #[derive(Clone, Copy)]
 struct TrackedUnit {
     health: i32,
+    pos: Vec2,
 }
 
 #[derive(Clone, Copy)]
@@ -330,6 +331,8 @@ fn main() {
         .init_resource::<FogMemory>()
         .init_resource::<RenderInterp>()
         .init_resource::<SceneRegistry>()
+        .init_resource::<SfxQueue>()
+        .insert_resource(MasterVolume::load())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -348,6 +351,9 @@ fn main() {
                     update_fog_memory,
                 ),
                 (
+                    play_sfx_queue,
+                    volume_toggle_input,
+                    announce_phase_sfx,
                     sync_static_scene,
                     sync_units,
                     animate_units,
@@ -477,6 +483,24 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     });
     spawn_grass_background(&mut commands);
     spawn_static_board(&mut commands, None);
+    let ambient = AudioAssets {
+        ui_click: asset_server.load("audio/ui_click.wav"),
+        build_place: asset_server.load("audio/build_place.wav"),
+        build_error: asset_server.load("audio/build_error.wav"),
+        unit_spawn: asset_server.load("audio/unit_spawn.wav"),
+        melee_hit: asset_server.load("audio/melee_hit.wav"),
+        ranged_shot: asset_server.load("audio/ranged_shot.wav"),
+        unit_death: asset_server.load("audio/unit_death.wav"),
+        bounty_coin: asset_server.load("audio/bounty_coin.wav"),
+        castle_alarm: asset_server.load("audio/castle_alarm.wav"),
+        victory: asset_server.load("audio/victory.wav"),
+        defeat: asset_server.load("audio/defeat.wav"),
+    };
+    commands.insert_resource(ambient);
+    commands.spawn((
+        AudioPlayer::new(asset_server.load("audio/ambient_loop.wav")),
+        PlaybackSettings::LOOP.with_volume(bevy::audio::Volume::Linear(0.05)),
+    ));
 }
 
 fn receive_packets(
@@ -741,6 +765,7 @@ fn build_selection_input(
     mut selection: ResMut<BuildSelection>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
+    mut sfx: ResMut<SfxQueue>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         selection.kind = None;
@@ -766,6 +791,9 @@ fn build_selection_input(
     ] {
         if keys.just_pressed(key) {
             if let Some(kind) = buildings.get(idx) {
+                if selection.kind != Some(*kind) {
+                    sfx.push(Sfx::UiClick);
+                }
                 selection.kind = Some(*kind);
             }
         }
@@ -778,6 +806,7 @@ fn ui_mouse_input(
     mut selection: ResMut<BuildSelection>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
+    mut sfx: ResMut<SfxQueue>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -788,6 +817,7 @@ fn ui_mouse_input(
 
     if net.connected && net.player_id.is_none() {
         if point_in_rect(screen, lobby_create_button_center(), lobby_button_size()) {
+            sfx.push(Sfx::UiClick);
             send_client(
                 &net,
                 &ClientPacket::CreateGame {
@@ -797,11 +827,13 @@ fn ui_mouse_input(
             return;
         }
         if point_in_rect(screen, lobby_refresh_button_center(), lobby_button_size()) {
+            sfx.push(Sfx::UiClick);
             send_client(&net, &ClientPacket::ListGames);
             return;
         }
         for (idx, game) in state.games.iter().take(5).enumerate() {
             if point_in_rect(screen, lobby_game_row_center(idx), lobby_game_row_size()) {
+                sfx.push(Sfx::UiClick);
                 send_client(&net, &ClientPacket::JoinGame { game_id: game.id });
                 return;
             }
@@ -815,6 +847,7 @@ fn ui_mouse_input(
             if selected_race.is_some()
                 && point_in_rect(screen, ready_button_center(), ready_button_size())
             {
+                sfx.push(Sfx::UiClick);
                 send_client(
                     &net,
                     &ClientPacket::SetReady {
@@ -828,6 +861,7 @@ fn ui_mouse_input(
             for (idx, race) in RaceKind::ALL.iter().enumerate() {
                 let center = race_button_center(idx);
                 if point_in_rect(screen, center, race_button_size()) {
+                    sfx.push(Sfx::UiClick);
                     send_client(
                         &net,
                         &ClientPacket::SetRace {
@@ -871,6 +905,7 @@ fn placement_input(
     mut selection: ResMut<BuildSelection>,
     mut world_selection: ResMut<WorldSelection>,
     state: Res<SnapshotState>,
+    mut sfx: ResMut<SfxQueue>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -916,8 +951,10 @@ fn placement_input(
     };
     let balance = active_balance(&state);
     if !can_place_building(&balance, snapshot, player_id, team, kind, lane, zone, cell) {
+        sfx.push(Sfx::BuildError);
         return;
     }
+    sfx.push(Sfx::BuildPlace);
     send_client(
         &net,
         &ClientPacket::PlaceBuilding {
@@ -1098,11 +1135,217 @@ fn update_world_hover(
     }
 }
 
+// ---- Audio (plan.md P0-3) ----
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Sfx {
+    UiClick,
+    BuildPlace,
+    BuildError,
+    UnitSpawn,
+    MeleeHit,
+    RangedShot,
+    UnitDeath,
+    BountyCoin,
+    CastleAlarm,
+    Victory,
+    Defeat,
+}
+
+impl Sfx {
+    fn handle<'a>(&self, assets: &'a AudioAssets) -> &'a Handle<AudioSource> {
+        match self {
+            Self::UiClick => &assets.ui_click,
+            Self::BuildPlace => &assets.build_place,
+            Self::BuildError => &assets.build_error,
+            Self::UnitSpawn => &assets.unit_spawn,
+            Self::MeleeHit => &assets.melee_hit,
+            Self::RangedShot => &assets.ranged_shot,
+            Self::UnitDeath => &assets.unit_death,
+            Self::BountyCoin => &assets.bounty_coin,
+            Self::CastleAlarm => &assets.castle_alarm,
+            Self::Victory => &assets.victory,
+            Self::Defeat => &assets.defeat,
+        }
+    }
+
+    fn gain(&self) -> f32 {
+        match self {
+            Self::UiClick => 0.55,
+            Self::BuildPlace => 0.7,
+            Self::BuildError => 0.5,
+            Self::UnitSpawn => 0.35,
+            Self::MeleeHit => 0.28,
+            Self::RangedShot => 0.3,
+            Self::UnitDeath => 0.4,
+            Self::BountyCoin => 0.6,
+            Self::CastleAlarm => 0.65,
+            Self::Victory => 0.85,
+            Self::Defeat => 0.85,
+        }
+    }
+
+    /// Minimum spacing between plays of the same sound, so 30 simultaneous
+    /// melee hits stay a battle rumble instead of a wall of noise.
+    fn cooldown(&self) -> Duration {
+        match self {
+            Self::MeleeHit | Self::RangedShot => Duration::from_millis(70),
+            Self::UnitDeath => Duration::from_millis(90),
+            Self::UnitSpawn => Duration::from_millis(110),
+            Self::CastleAlarm => Duration::from_secs(4),
+            Self::Victory | Self::Defeat => Duration::from_secs(2),
+            _ => Duration::from_millis(40),
+        }
+    }
+}
+
+#[derive(Resource)]
+struct AudioAssets {
+    ui_click: Handle<AudioSource>,
+    build_place: Handle<AudioSource>,
+    build_error: Handle<AudioSource>,
+    unit_spawn: Handle<AudioSource>,
+    melee_hit: Handle<AudioSource>,
+    ranged_shot: Handle<AudioSource>,
+    unit_death: Handle<AudioSource>,
+    bounty_coin: Handle<AudioSource>,
+    castle_alarm: Handle<AudioSource>,
+    victory: Handle<AudioSource>,
+    defeat: Handle<AudioSource>,
+}
+
+#[derive(Resource, Default)]
+struct SfxQueue {
+    queue: Vec<Sfx>,
+    last_played: HashMap<Sfx, Instant>,
+}
+
+impl SfxQueue {
+    fn push(&mut self, sfx: Sfx) {
+        if let Some(last) = self.last_played.get(&sfx) {
+            if last.elapsed() < sfx.cooldown() {
+                return;
+            }
+        }
+        self.last_played.insert(sfx, Instant::now());
+        self.queue.push(sfx);
+    }
+}
+
+#[derive(Resource)]
+struct MasterVolume {
+    value: f32,
+    muted: bool,
+}
+
+impl Default for MasterVolume {
+    fn default() -> Self {
+        Self {
+            value: 0.8,
+            muted: false,
+        }
+    }
+}
+
+impl MasterVolume {
+    fn settings_path() -> std::path::PathBuf {
+        std::path::PathBuf::from("config/client_settings.json")
+    }
+
+    fn load() -> Self {
+        let mut volume = Self::default();
+        if let Ok(raw) = std::fs::read_to_string(Self::settings_path()) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(value) = parsed.get("master_volume").and_then(|v| v.as_f64()) {
+                    volume.value = (value as f32).clamp(0.0, 1.0);
+                }
+                if let Some(muted) = parsed.get("muted").and_then(|v| v.as_bool()) {
+                    volume.muted = muted;
+                }
+            }
+        }
+        volume
+    }
+
+    fn save(&self) {
+        let payload = serde_json::json!({
+            "master_volume": self.value,
+            "muted": self.muted,
+        });
+        let _ = std::fs::write(Self::settings_path(), payload.to_string());
+    }
+
+    fn effective(&self) -> f32 {
+        if self.muted {
+            0.0
+        } else {
+            self.value
+        }
+    }
+}
+
+fn play_sfx_queue(
+    mut commands: Commands,
+    mut queue: ResMut<SfxQueue>,
+    assets: Res<AudioAssets>,
+    volume: Res<MasterVolume>,
+) {
+    for sfx in queue.queue.drain(..) {
+        let gain = sfx.gain() * volume.effective();
+        if gain <= 0.0 {
+            continue;
+        }
+        commands.spawn((
+            AudioPlayer::new(sfx.handle(&assets).clone()),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(gain)),
+        ));
+    }
+}
+
+fn volume_toggle_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut volume: ResMut<MasterVolume>,
+) {
+    if keys.just_pressed(KeyCode::KeyV) {
+        volume.muted = !volume.muted;
+        volume.save();
+    }
+}
+
+/// Victory/defeat stingers on the GameOver phase transition.
+fn announce_phase_sfx(
+    state: Res<SnapshotState>,
+    net: Res<ClientNet>,
+    mut queue: ResMut<SfxQueue>,
+    mut announced: Local<Option<MatchPhase>>,
+) {
+    let Some(snapshot) = &state.snapshot else {
+        *announced = None;
+        return;
+    };
+    if *announced == Some(snapshot.phase) {
+        return;
+    }
+    let transitioned_to_gameover = snapshot.phase == MatchPhase::GameOver;
+    let previous = *announced;
+    *announced = Some(snapshot.phase);
+    if !transitioned_to_gameover || previous.is_none() {
+        return;
+    }
+    let stinger = match (net.team, snapshot.winner) {
+        (Some(team), Some(winner)) if winner == team => Sfx::Victory,
+        (Some(_), Some(_)) => Sfx::Defeat,
+        _ => return,
+    };
+    queue.push(stinger);
+}
+
 fn detect_combat_vfx(
     mut commands: Commands,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
     mut tracker: ResMut<CombatTracker>,
+    mut sfx: ResMut<SfxQueue>,
 ) {
     if !state.is_changed() {
         return;
@@ -1129,6 +1372,14 @@ fn detect_combat_vfx(
             .seen_bounty_events
             .retain(|id| snapshot.bounty_events.iter().any(|event| event.id == *id));
 
+        for (tracked_id, tracked) in tracker.units.iter() {
+            // A tracked unit missing from the snapshot died; only make it
+            // audible if it died somewhere we can currently see.
+            let gone = !snapshot.units.iter().any(|unit| unit.id == *tracked_id);
+            if gone && is_world_revealed(snapshot, net.team, tracked.pos) {
+                sfx.push(Sfx::UnitDeath);
+            }
+        }
         for unit in &snapshot.units {
             if !is_unit_visible(snapshot, net.team, unit) {
                 continue;
@@ -1150,6 +1401,12 @@ fn detect_combat_vfx(
                             config.attack_type,
                         ));
                     spawn_combat_impact(&mut commands, pos, damage, attacker.0, attacker.1, false);
+                    if unit.health > 0 {
+                        sfx.push(match config.attack_mode {
+                            castle_lanes::sim::AttackMode::Melee => Sfx::MeleeHit,
+                            castle_lanes::sim::AttackMode::Ranged => Sfx::RangedShot,
+                        });
+                    }
                 }
             }
         }
@@ -1202,6 +1459,7 @@ fn detect_combat_vfx(
                         AttackType::Siege,
                     ));
                 spawn_combat_impact(&mut commands, pos, damage, attacker.0, attacker.1, true);
+                sfx.push(Sfx::CastleAlarm);
             }
         }
 
@@ -1210,6 +1468,7 @@ fn detect_combat_vfx(
                 if event.team == team && !tracker.seen_bounty_events.contains(&event.id) {
                     let pos = sim_pos_to_world(event.pos) + Vec2::new(0.0, 34.0);
                     spawn_bounty_text(&mut commands, pos, event.amount, event.team);
+                    sfx.push(Sfx::BountyCoin);
                     tracker.seen_bounty_events.insert(event.id);
                 }
             }
@@ -1224,6 +1483,7 @@ fn detect_combat_vfx(
                 unit.id,
                 TrackedUnit {
                     health: unit.health,
+                    pos: unit_world_pos(unit),
                 },
             )
         })
@@ -1541,6 +1801,7 @@ fn sync_units(
     state: Res<SnapshotState>,
     net: Res<ClientNet>,
     unit_assets: Res<UnitSpriteAssets>,
+    mut sfx: ResMut<SfxQueue>,
 ) {
     let Some(snapshot) = &state.snapshot else {
         despawn_all_units(&mut commands, &mut registry);
@@ -1569,6 +1830,7 @@ fn sync_units(
         } else {
             let visual = spawn_unit_visual(&mut commands, unit, &balance, &unit_assets);
             registry.units.insert(unit.id, visual);
+            sfx.push(Sfx::UnitSpawn);
         }
     }
     let stale: Vec<u64> = registry

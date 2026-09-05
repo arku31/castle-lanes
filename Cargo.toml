@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bevy = { version = "=0.18.1", default-features = false, features = [
     "bevy_asset",
+    "bevy_audio",
     "bevy_core_pipeline",
     "bevy_render",
     "bevy_sprite",
@@ -18,6 +19,7 @@ bevy = { version = "=0.18.1", default-features = false, features = [
     "multi_threaded",
     "png",
     "std",
+    "wav",
     "wayland",
     "x11",
 ] }
