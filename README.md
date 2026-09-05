@@ -2,6 +2,10 @@
 
 Castle Lanes is a native desktop Rust/Bevy MVP inspired by the builder-autobattler shape of classic custom RTS maps, using original names and original 2D isometric-ish art.
 
+![An Ember army besieging the blue Vanguard castle](docs/screenshots/battle.png)
+
+![Vanguard defenders marching out to meet the Ember push](docs/screenshots/battle_armies.png)
+
 ## Run
 
 With [Task](https://taskfile.dev/), common commands are available through `Taskfile.yml`:
