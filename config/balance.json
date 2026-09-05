@@ -4,7 +4,9 @@
   "income_interval": 10.0,
   "interest_rate": 0.04,
   "castle_regen_per_second": 10.0,
-  "sudden_death_start": 600.0,
+  "castle_regen_delay_secs": 8.0,
+  "sudden_death_ramp_per_minute": 1.0,
+  "sudden_death_start": 480.0,
   "races": [
     {
       "kind": "Vanguard",
@@ -66,7 +68,11 @@
       "spawn_interval": 22.0,
       "spawned_unit": "VanguardGuard",
       "income_bonus": 0,
-      "color": [0.77, 0.52, 0.31]
+      "color": [
+        0.77,
+        0.52,
+        0.31
+      ]
     },
     {
       "kind": "VanguardRangeTower",
@@ -78,7 +84,11 @@
       "spawn_interval": 30.0,
       "spawned_unit": "VanguardArcher",
       "income_bonus": 0,
-      "color": [0.39, 0.62, 0.82]
+      "color": [
+        0.39,
+        0.62,
+        0.82
+      ]
     },
     {
       "kind": "VanguardForge",
@@ -90,7 +100,11 @@
       "spawn_interval": null,
       "spawned_unit": null,
       "income_bonus": 5,
-      "color": [0.76, 0.69, 0.30]
+      "color": [
+        0.76,
+        0.69,
+        0.3
+      ]
     },
     {
       "kind": "VanguardPikeYard",
@@ -102,7 +116,11 @@
       "spawn_interval": 27.0,
       "spawned_unit": "VanguardPikeman",
       "income_bonus": 0,
-      "color": [0.58, 0.62, 0.72]
+      "color": [
+        0.58,
+        0.62,
+        0.72
+      ]
     },
     {
       "kind": "VanguardBulwarkHall",
@@ -114,7 +132,11 @@
       "spawn_interval": 38.0,
       "spawned_unit": "VanguardShieldbearer",
       "income_bonus": 0,
-      "color": [0.48, 0.55, 0.68]
+      "color": [
+        0.48,
+        0.55,
+        0.68
+      ]
     },
     {
       "kind": "VanguardChapel",
@@ -126,7 +148,11 @@
       "spawn_interval": 36.0,
       "spawned_unit": "VanguardBattleCleric",
       "income_bonus": 0,
-      "color": [0.72, 0.72, 0.86]
+      "color": [
+        0.72,
+        0.72,
+        0.86
+      ]
     },
     {
       "kind": "VanguardStables",
@@ -138,7 +164,11 @@
       "spawn_interval": 42.0,
       "spawned_unit": "VanguardLancer",
       "income_bonus": 0,
-      "color": [0.66, 0.46, 0.28]
+      "color": [
+        0.66,
+        0.46,
+        0.28
+      ]
     },
     {
       "kind": "VanguardSiegeWorkshop",
@@ -150,7 +180,11 @@
       "spawn_interval": 50.0,
       "spawned_unit": "VanguardBallista",
       "income_bonus": 0,
-      "color": [0.50, 0.44, 0.34]
+      "color": [
+        0.5,
+        0.44,
+        0.34
+      ]
     },
     {
       "kind": "GroveRootDen",
@@ -162,7 +196,11 @@
       "spawn_interval": 24.0,
       "spawned_unit": "GroveBruiser",
       "income_bonus": 0,
-      "color": [0.33, 0.66, 0.36]
+      "color": [
+        0.33,
+        0.66,
+        0.36
+      ]
     },
     {
       "kind": "GroveThornSpire",
@@ -174,7 +212,11 @@
       "spawn_interval": 32.0,
       "spawned_unit": "GroveNeedler",
       "income_bonus": 0,
-      "color": [0.45, 0.74, 0.48]
+      "color": [
+        0.45,
+        0.74,
+        0.48
+      ]
     },
     {
       "kind": "GroveBloomWell",
@@ -186,7 +228,11 @@
       "spawn_interval": null,
       "spawned_unit": null,
       "income_bonus": 6,
-      "color": [0.72, 0.82, 0.38]
+      "color": [
+        0.72,
+        0.82,
+        0.38
+      ]
     },
     {
       "kind": "GroveMossNursery",
@@ -198,7 +244,11 @@
       "spawn_interval": 19.0,
       "spawned_unit": "GroveSproutling",
       "income_bonus": 0,
-      "color": [0.38, 0.70, 0.32]
+      "color": [
+        0.38,
+        0.7,
+        0.32
+      ]
     },
     {
       "kind": "GroveBarkBastion",
@@ -210,7 +260,11 @@
       "spawn_interval": 44.0,
       "spawned_unit": "GroveBarkguard",
       "income_bonus": 0,
-      "color": [0.35, 0.48, 0.25]
+      "color": [
+        0.35,
+        0.48,
+        0.25
+      ]
     },
     {
       "kind": "GroveMirePool",
@@ -222,7 +276,11 @@
       "spawn_interval": 39.0,
       "spawned_unit": "GroveMireShaman",
       "income_bonus": 0,
-      "color": [0.22, 0.58, 0.46]
+      "color": [
+        0.22,
+        0.58,
+        0.46
+      ]
     },
     {
       "kind": "GroveVineWarren",
@@ -234,7 +292,11 @@
       "spawn_interval": 31.0,
       "spawned_unit": "GroveVineStalker",
       "income_bonus": 0,
-      "color": [0.42, 0.62, 0.30]
+      "color": [
+        0.42,
+        0.62,
+        0.3
+      ]
     },
     {
       "kind": "GroveAncientSeed",
@@ -246,7 +308,11 @@
       "spawn_interval": 56.0,
       "spawned_unit": "GroveTreantColossus",
       "income_bonus": 0,
-      "color": [0.47, 0.57, 0.25]
+      "color": [
+        0.47,
+        0.57,
+        0.25
+      ]
     },
     {
       "kind": "EmberCinderPit",
@@ -258,7 +324,11 @@
       "spawn_interval": 18.0,
       "spawned_unit": "EmberRunner",
       "income_bonus": 0,
-      "color": [0.86, 0.34, 0.22]
+      "color": [
+        0.86,
+        0.34,
+        0.22
+      ]
     },
     {
       "kind": "EmberFlameSpire",
@@ -270,7 +340,11 @@
       "spawn_interval": 34.0,
       "spawned_unit": "EmberCaster",
       "income_bonus": 0,
-      "color": [0.94, 0.47, 0.18]
+      "color": [
+        0.94,
+        0.47,
+        0.18
+      ]
     },
     {
       "kind": "EmberAshMine",
@@ -282,7 +356,11 @@
       "spawn_interval": null,
       "spawned_unit": null,
       "income_bonus": 7,
-      "color": [0.62, 0.50, 0.45]
+      "color": [
+        0.62,
+        0.5,
+        0.45
+      ]
     },
     {
       "kind": "EmberSparkKennel",
@@ -294,7 +372,11 @@
       "spawn_interval": 20.0,
       "spawned_unit": "EmberSparkImp",
       "income_bonus": 0,
-      "color": [0.95, 0.58, 0.18]
+      "color": [
+        0.95,
+        0.58,
+        0.18
+      ]
     },
     {
       "kind": "EmberObsidianGate",
@@ -306,7 +388,11 @@
       "spawn_interval": 40.0,
       "spawned_unit": "EmberObsidianGuard",
       "income_bonus": 0,
-      "color": [0.32, 0.26, 0.28]
+      "color": [
+        0.32,
+        0.26,
+        0.28
+      ]
     },
     {
       "kind": "EmberBlazeStable",
@@ -318,7 +404,11 @@
       "spawn_interval": 35.0,
       "spawned_unit": "EmberFireLancer",
       "income_bonus": 0,
-      "color": [0.88, 0.26, 0.18]
+      "color": [
+        0.88,
+        0.26,
+        0.18
+      ]
     },
     {
       "kind": "EmberSmokeAltar",
@@ -330,7 +420,11 @@
       "spawn_interval": 43.0,
       "spawned_unit": "EmberSmokeWitch",
       "income_bonus": 0,
-      "color": [0.52, 0.42, 0.46]
+      "color": [
+        0.52,
+        0.42,
+        0.46
+      ]
     },
     {
       "kind": "EmberInfernoEngine",
@@ -342,7 +436,11 @@
       "spawn_interval": 52.0,
       "spawned_unit": "EmberCinderEngine",
       "income_bonus": 0,
-      "color": [0.82, 0.23, 0.12]
+      "color": [
+        0.82,
+        0.23,
+        0.12
+      ]
     }
   ],
   "units": [
@@ -352,7 +450,7 @@
       "label": "G",
       "max_health": 120,
       "damage": 18,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -367,7 +465,7 @@
       "label": "A",
       "max_health": 70,
       "damage": 12,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 1,
       "attack_type": "Pierce",
       "attack_mode": "Ranged",
@@ -382,7 +480,7 @@
       "label": "P",
       "max_health": 95,
       "damage": 20,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Pierce",
       "attack_mode": "Melee",
@@ -397,7 +495,7 @@
       "label": "S",
       "max_health": 220,
       "damage": 12,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -412,7 +510,7 @@
       "label": "C",
       "max_health": 80,
       "damage": 18,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Magic",
       "attack_mode": "Ranged",
@@ -427,7 +525,7 @@
       "label": "L",
       "max_health": 150,
       "damage": 24,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -442,7 +540,7 @@
       "label": "B",
       "max_health": 110,
       "damage": 38,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 5,
       "attack_type": "Siege",
       "attack_mode": "Ranged",
@@ -457,7 +555,7 @@
       "label": "B",
       "max_health": 150,
       "damage": 16,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -472,7 +570,7 @@
       "label": "N",
       "max_health": 85,
       "damage": 10,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Pierce",
       "attack_mode": "Ranged",
@@ -487,7 +585,7 @@
       "label": "S",
       "max_health": 55,
       "damage": 9,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 1,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -502,7 +600,7 @@
       "label": "K",
       "max_health": 260,
       "damage": 14,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 4,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -517,7 +615,7 @@
       "label": "M",
       "max_health": 95,
       "damage": 22,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Magic",
       "attack_mode": "Ranged",
@@ -532,7 +630,7 @@
       "label": "V",
       "max_health": 115,
       "damage": 19,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -547,7 +645,7 @@
       "label": "T",
       "max_health": 320,
       "damage": 32,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 5,
       "attack_type": "Siege",
       "attack_mode": "Melee",
@@ -562,7 +660,7 @@
       "label": "R",
       "max_health": 80,
       "damage": 14,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 1,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -577,7 +675,7 @@
       "label": "C",
       "max_health": 60,
       "damage": 18,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Magic",
       "attack_mode": "Ranged",
@@ -592,7 +690,7 @@
       "label": "I",
       "max_health": 45,
       "damage": 11,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 1,
       "attack_type": "Magic",
       "attack_mode": "Melee",
@@ -607,7 +705,7 @@
       "label": "O",
       "max_health": 170,
       "damage": 18,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Normal",
       "attack_mode": "Melee",
@@ -622,7 +720,7 @@
       "label": "L",
       "max_health": 105,
       "damage": 21,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 2,
       "attack_type": "Pierce",
       "attack_mode": "Melee",
@@ -637,7 +735,7 @@
       "label": "W",
       "max_health": 75,
       "damage": 24,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 3,
       "attack_type": "Magic",
       "attack_mode": "Ranged",
@@ -652,7 +750,7 @@
       "label": "E",
       "max_health": 130,
       "damage": 42,
-      "damage_variance": 0.10,
+      "damage_variance": 0.1,
       "bounty": 5,
       "attack_type": "Siege",
       "attack_mode": "Ranged",

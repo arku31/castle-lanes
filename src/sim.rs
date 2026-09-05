@@ -13,6 +13,8 @@ pub const GRID_H: i32 = 5;
 pub const LANE_LENGTH: f32 = 100.0;
 pub const SUDDEN_DEATH_START: f32 = 600.0;
 pub const CASTLE_REGEN_PER_SECOND: f32 = 10.0;
+pub const CASTLE_REGEN_DELAY_SECS: f32 = 8.0;
+pub const SUDDEN_DEATH_RAMP_PER_MINUTE: f32 = 0.5;
 pub const DEFAULT_BALANCE_PATH: &str = "config/balance.json";
 const BOUNTY_EVENT_TTL: f32 = 0.75;
 const CASTLE_JUNCTION_RANGE: f32 = 18.0;
@@ -582,6 +584,10 @@ pub struct BalanceConfig {
     pub interest_rate: f32,
     #[serde(default = "default_castle_regen_per_second")]
     pub castle_regen_per_second: f32,
+    #[serde(default = "default_castle_regen_delay_secs")]
+    pub castle_regen_delay_secs: f32,
+    #[serde(default = "default_sudden_death_ramp_per_minute")]
+    pub sudden_death_ramp_per_minute: f32,
     pub sudden_death_start: f32,
     pub races: Vec<RaceConfig>,
     pub buildings: Vec<BuildingConfig>,
@@ -707,6 +713,14 @@ fn default_interest_rate() -> f32 {
 
 fn default_castle_regen_per_second() -> f32 {
     CASTLE_REGEN_PER_SECOND
+}
+
+fn default_castle_regen_delay_secs() -> f32 {
+    CASTLE_REGEN_DELAY_SECS
+}
+
+fn default_sudden_death_ramp_per_minute() -> f32 {
+    SUDDEN_DEATH_RAMP_PER_MINUTE
 }
 
 fn default_bounty() -> i32 {
@@ -863,6 +877,7 @@ pub struct GameSim {
     income_timer: f32,
     elapsed_secs: f32,
     castle_regen_accum: [f32; 2],
+    castle_regen_delay_timer: [f32; 2],
     overtime_damage_accum: [f32; 2],
 }
 
@@ -915,6 +930,7 @@ impl GameSim {
             income_timer,
             elapsed_secs: 0.0,
             castle_regen_accum: [0.0, 0.0],
+            castle_regen_delay_timer: [0.0, 0.0],
             overtime_damage_accum: [0.0, 0.0],
         }
     }
@@ -1232,6 +1248,7 @@ impl GameSim {
         self.elapsed_secs = 0.0;
         self.rng_state = mix_seed(self.seed);
         self.castle_regen_accum = [0.0, 0.0];
+        self.castle_regen_delay_timer = [0.0, 0.0];
         self.overtime_damage_accum = [0.0, 0.0];
     }
 
@@ -1499,13 +1516,27 @@ impl GameSim {
 
     fn apply_castle_regen_and_damage(&mut self, dt: f32, castle_damage: [i32; 2]) {
         let regen_per_second = self.balance.castle_regen_per_second.max(0.0);
+        let regen_delay = self.balance.castle_regen_delay_secs.max(0.0);
         for (idx, damage) in castle_damage.into_iter().enumerate() {
             if self.castles[idx].health <= 0 {
                 continue;
             }
 
+            if damage > 0 {
+                // Besieged: incoming damage pauses regeneration until the
+                // castle has gone castle_regen_delay_secs without being hit,
+                // so early pressure sticks instead of being healed off.
+                self.castle_regen_delay_timer[idx] = regen_delay;
+                self.castle_regen_accum[idx] = 0.0;
+            } else if self.castle_regen_delay_timer[idx] > 0.0 {
+                self.castle_regen_delay_timer[idx] =
+                    (self.castle_regen_delay_timer[idx] - dt).max(0.0);
+            }
+
+            let besieged = self.castle_regen_delay_timer[idx] > 0.0;
             if regen_per_second > 0.0
-                && (self.castles[idx].health < self.castles[idx].max_health || damage > 0)
+                && !besieged
+                && self.castles[idx].health < self.castles[idx].max_health
             {
                 self.castle_regen_accum[idx] += regen_per_second * dt;
             }
@@ -1627,10 +1658,17 @@ impl GameSim {
             return;
         }
 
+        // Pressure ramps up the longer sudden death runs so stalemates still
+        // resolve instead of both castles grinding down at a fixed 40 dps.
+        let ramp = self.balance.sudden_death_ramp_per_minute.max(0.0);
+        let minutes_into_sudden_death =
+            ((self.elapsed_secs - self.balance.sudden_death_start) / 60.0).max(0.0);
+        let pressure_scale = 1.0 + ramp * minutes_into_sudden_death;
+
         for team in [Team::Left, Team::Right] {
             let pressure = self.board_pressure(team.opponent());
             let slot = team.slot();
-            self.overtime_damage_accum[slot] += pressure * dt;
+            self.overtime_damage_accum[slot] += pressure * pressure_scale * dt;
             let damage = self.overtime_damage_accum[slot].floor() as i32;
             if damage > 0 {
                 self.overtime_damage_accum[slot] -= damage as f32;
@@ -2241,7 +2279,7 @@ mod tests {
     }
 
     #[test]
-    fn weakest_single_unit_is_offset_by_castle_regeneration() {
+    fn weakest_single_unit_is_not_healed_off_while_attacking() {
         let mut sim = ready_two_players();
         let slot = Team::Right.slot();
         let max_health = sim.castles[slot].max_health;
@@ -2256,6 +2294,35 @@ mod tests {
         ));
 
         sim.tick(1.0);
+
+        // Besieged regen: a continuous attacker must land damage now.
+        assert!(sim.castles[slot].health < max_health);
+    }
+
+    #[test]
+    fn castle_regeneration_resumes_after_siege_delay() {
+        let mut sim = ready_two_players();
+        let slot = Team::Right.slot();
+        let max_health = sim.castles[slot].max_health;
+        let mut attacker = test_unit(
+            741,
+            Team::Left,
+            UnitKind::GroveSproutling,
+            Lane::Top,
+            sim.balance.unit(UnitKind::GroveSproutling).max_health,
+            Team::Right.castle_pos() - 1.0,
+            0.0,
+        );
+        sim.units.push(attacker.clone());
+        sim.tick(1.0);
+        let damaged_health = sim.castles[slot].health;
+        assert!(damaged_health < max_health);
+
+        // Attacker dies: after the configured siege delay, regen resumes and
+        // walks the castle back to full.
+        attacker.health = 0;
+        sim.units.clear();
+        sim.tick(sim.balance.castle_regen_delay_secs + 1.0);
 
         assert_eq!(sim.castles[slot].health, max_health);
     }
