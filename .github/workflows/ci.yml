@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install Bevy Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            g++ pkg-config libx11-dev libasound2-dev libudev-dev \
+            libwayland-dev libxkbcommon-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Check all binaries
+        run: cargo check --bins
+
+      - name: Test suite (serial, as `task test` does)
+        run: cargo test -- --test-threads=1 -q
+
+      - name: Determinism + sim perf smoke (release)
+        run: |
+          cargo build --release --example sim_perf
+          cargo run --release --example sim_perf | tee perf-smoke.txt
+
+      - name: Balance harness smoke
+        run: cargo run --release --example sim_balance -- --games 3
+
+      - name: Upload perf smoke
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-smoke
+          path: perf-smoke.txt
+          if-no-files-found: ignore
