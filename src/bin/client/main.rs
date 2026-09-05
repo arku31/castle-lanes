@@ -220,6 +220,7 @@ struct UnitVisual {
     sprite_base_y: f32,
     badge_base_y: f32,
     kind: UnitKind,
+    side: Team,
     last_pos: Vec2,
 }
 

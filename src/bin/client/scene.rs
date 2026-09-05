@@ -168,6 +168,7 @@ pub(crate) fn sync_units(
     net: Res<ClientNet>,
     unit_assets: Res<UnitSpriteAssets>,
     mut sfx: ResMut<SfxQueue>,
+    frame_sets: Res<UnitFrameSets>,
 ) {
     let Some(snapshot) = &state.snapshot else {
         despawn_all_units(&mut commands, &mut registry);
@@ -208,6 +209,28 @@ pub(crate) fn sync_units(
         .collect();
     for id in stale {
         if let Some(visual) = registry.units.remove(&id) {
+            // Death frame: leave a fading corpse where the unit stood.
+            if let Some(frames) = frame_sets.frames.get(&visual.kind) {
+                let (mut x, mut y) = (visual.last_pos.x, visual.last_pos.y);
+                if let Ok(root) = transforms.get(visual.root) {
+                    x = root.translation.x;
+                    y = root.translation.y;
+                }
+                let mut corpse_sprite =
+                    Sprite::from_image(frames[4].clone());
+                corpse_sprite.custom_size =
+                    Some(unit_sprite_size(visual.kind));
+                corpse_sprite.flip_x = visual.side == Team::Right;
+                commands.spawn((
+                    corpse_sprite,
+                    Transform::from_xyz(x, y + 12.0, UNIT_ROOT_Z - 0.5),
+                    CombatVfx {
+                        lifetime: 0.9,
+                        max_lifetime: 0.9,
+                        velocity: Vec2::ZERO,
+                    },
+                ));
+            }
             commands.entity(visual.root).despawn();
         }
     }
@@ -1110,6 +1133,7 @@ pub(crate) fn spawn_unit_visual(
         sprite_base_y: 12.0,
         badge_base_y: 27.0,
         kind: unit.kind,
+        side,
         last_pos: world,
     }
 }
