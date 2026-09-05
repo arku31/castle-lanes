@@ -58,9 +58,7 @@ fn main() -> std::io::Result<()> {
     if legacy_json {
         castle_lanes::net::set_outgoing_format(castle_lanes::net::PacketFormat::Json);
     }
-    let mut args = all_args
-        .into_iter()
-        .filter(|arg| arg != "--legacy-json");
+    let mut args = all_args.into_iter().filter(|arg| arg != "--legacy-json");
     let bind_addr = args
         .next()
         .unwrap_or_else(|| DEFAULT_SERVER_ADDR.to_string());

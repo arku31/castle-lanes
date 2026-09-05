@@ -30,7 +30,7 @@ thiserror = "2.0.17"
 
 [[bin]]
 name = "castle_lanes_client"
-path = "src/bin/client.rs"
+path = "src/bin/client/main.rs"
 
 [[bin]]
 name = "castle_lanes_server"

@@ -1,0 +1,494 @@
+//! vfx systems split out of the monolithic client (plan.md Phase 1 item 8).
+#![allow(unused_imports)]
+pub(crate) use super::audio::*;
+pub(crate) use super::input::*;
+pub(crate) use super::net::*;
+pub(crate) use super::scene::*;
+pub(crate) use super::ui::*;
+use super::*;
+
+pub(crate) fn detect_combat_vfx(
+    mut commands: Commands,
+    net: Res<ClientNet>,
+    state: Res<SnapshotState>,
+    mut tracker: ResMut<CombatTracker>,
+    mut sfx: ResMut<SfxQueue>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    let Some(snapshot) = &state.snapshot else {
+        tracker.initialized = false;
+        tracker.units.clear();
+        tracker.buildings.clear();
+        tracker.seen_bounty_events.clear();
+        return;
+    };
+    if snapshot.phase != MatchPhase::Playing {
+        tracker.initialized = false;
+        tracker.units.clear();
+        tracker.buildings.clear();
+        tracker.seen_bounty_events.clear();
+        tracker.castle_health = [0, 0];
+        return;
+    }
+    let balance = active_balance(&state);
+
+    if tracker.initialized {
+        tracker
+            .seen_bounty_events
+            .retain(|id| snapshot.bounty_events.iter().any(|event| event.id == *id));
+
+        for (tracked_id, tracked) in tracker.units.iter() {
+            // A tracked unit missing from the snapshot died; only make it
+            // audible if it died somewhere we can currently see.
+            let gone = !snapshot.units.iter().any(|unit| unit.id == *tracked_id);
+            if gone && is_world_revealed(snapshot, net.team, tracked.pos) {
+                sfx.push(Sfx::UnitDeath);
+            }
+        }
+        for unit in &snapshot.units {
+            if !is_unit_visible(snapshot, net.team, unit) {
+                continue;
+            }
+            if let Some(previous) = tracker.units.get(&unit.id) {
+                if unit.health < previous.health {
+                    let damage = previous.health - unit.health;
+                    let pos = unit_world_pos(unit);
+                    let config = balance.unit(unit.kind);
+                    let attacker = infer_attacker(snapshot, &balance, pos, unit.owner)
+                        .map(|attacker| {
+                            (
+                                unit_world_pos(attacker),
+                                balance.unit(attacker.kind).attack_type,
+                            )
+                        })
+                        .unwrap_or((
+                            Vec2::new(pos.x - unit.owner.direction() * 38.0, pos.y),
+                            config.attack_type,
+                        ));
+                    spawn_combat_impact(&mut commands, pos, damage, attacker.0, attacker.1, false);
+                    if unit.health > 0 {
+                        sfx.push(match config.attack_mode {
+                            castle_lanes::sim::AttackMode::Melee => Sfx::MeleeHit,
+                            castle_lanes::sim::AttackMode::Ranged => Sfx::RangedShot,
+                        });
+                    }
+                }
+            }
+        }
+
+        for building in &snapshot.buildings {
+            if !is_building_visible(snapshot, net.team, building) {
+                continue;
+            }
+            if let Some(previous) = tracker.buildings.get(&building.id) {
+                if building.health < previous.health {
+                    let damage = previous.health - building.health;
+                    let pos = building_hit_pos(building);
+                    let attacker = infer_attacker(snapshot, &balance, pos, building.owner)
+                        .map(|attacker| {
+                            (
+                                unit_world_pos(attacker),
+                                balance.unit(attacker.kind).attack_type,
+                            )
+                        })
+                        .unwrap_or((
+                            Vec2::new(pos.x - building.owner.opponent().direction() * 58.0, pos.y),
+                            AttackType::Siege,
+                        ));
+                    spawn_structure_impact(&mut commands, pos, damage, attacker.0, attacker.1);
+                }
+            }
+        }
+
+        for castle in &snapshot.castles {
+            if !is_castle_visible(snapshot, net.team, castle.team) {
+                continue;
+            }
+            let slot = castle.team.slot();
+            let previous = tracker.castle_health[slot];
+            if previous > 0 && castle.health < previous {
+                let damage = previous - castle.health;
+                let pos = castle_world_pos(castle.team) + Vec2::new(0.0, 52.0);
+                let attacker = infer_attacker(snapshot, &balance, pos, castle.team)
+                    .map(|attacker| {
+                        (
+                            unit_world_pos(attacker),
+                            balance.unit(attacker.kind).attack_type,
+                        )
+                    })
+                    .unwrap_or((
+                        Vec2::new(
+                            pos.x - castle.team.opponent().direction() * 52.0,
+                            pos.y - 28.0,
+                        ),
+                        AttackType::Siege,
+                    ));
+                spawn_combat_impact(&mut commands, pos, damage, attacker.0, attacker.1, true);
+                sfx.push(Sfx::CastleAlarm);
+            }
+        }
+
+        if let Some(team) = net.team {
+            for event in &snapshot.bounty_events {
+                if event.team == team && !tracker.seen_bounty_events.contains(&event.id) {
+                    let pos = sim_pos_to_world(event.pos) + Vec2::new(0.0, 34.0);
+                    spawn_bounty_text(&mut commands, pos, event.amount, event.team);
+                    sfx.push(Sfx::BountyCoin);
+                    tracker.seen_bounty_events.insert(event.id);
+                }
+            }
+        }
+    }
+
+    tracker.units = snapshot
+        .units
+        .iter()
+        .map(|unit| {
+            (
+                unit.id,
+                TrackedUnit {
+                    health: unit.health,
+                    pos: unit_world_pos(unit),
+                },
+            )
+        })
+        .collect();
+    tracker.buildings = snapshot
+        .buildings
+        .iter()
+        .map(|building| {
+            (
+                building.id,
+                TrackedBuilding {
+                    health: building.health,
+                },
+            )
+        })
+        .collect();
+    tracker.castle_health = [
+        snapshot.castles[Team::Left.slot()].health,
+        snapshot.castles[Team::Right.slot()].health,
+    ];
+    tracker.initialized = true;
+}
+
+pub(crate) fn update_combat_vfx(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(
+        Entity,
+        &mut CombatVfx,
+        &mut Transform,
+        Option<&mut TextFont>,
+        Option<&mut TextColor>,
+        Option<&mut Sprite>,
+    )>,
+) {
+    for (entity, mut vfx, mut transform, font, text_color, sprite) in &mut query {
+        vfx.lifetime -= time.delta_secs();
+        if vfx.lifetime <= 0.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let age = 1.0 - (vfx.lifetime / vfx.max_lifetime).clamp(0.0, 1.0);
+        transform.translation.x += vfx.velocity.x * time.delta_secs();
+        transform.translation.y += vfx.velocity.y * time.delta_secs();
+        transform.scale = Vec3::splat(1.0 + age * 0.18);
+
+        if let Some(mut font) = font {
+            font.font_size *= 1.0 + time.delta_secs() * 0.24;
+        }
+        let alpha = (vfx.lifetime / vfx.max_lifetime).clamp(0.0, 1.0);
+        if let Some(mut text_color) = text_color {
+            text_color.0 = text_color.0.with_alpha(alpha);
+        }
+        if let Some(mut sprite) = sprite {
+            sprite.color = sprite.color.with_alpha(alpha * 0.82);
+        }
+    }
+}
+
+pub(crate) fn infer_attacker<'a>(
+    snapshot: &'a MatchSnapshot,
+    balance: &BalanceConfig,
+    target_pos: Vec2,
+    target_team: Team,
+) -> Option<&'a Unit> {
+    snapshot
+        .units
+        .iter()
+        .filter(|unit| unit.owner != target_team)
+        .map(|unit| {
+            let unit_config = balance.unit(unit.kind);
+            let pos = unit_world_pos(unit);
+            let score = pos.distance(target_pos);
+            (unit, score, unit_config.attack_range + 3.5)
+        })
+        .filter(|(_, score, range)| *score <= range * 9.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(unit, _, _)| unit)
+}
+
+pub(crate) fn building_hit_pos(building: &Building) -> Vec2 {
+    cell_to_world(building.owner, building.lane, building.zone, building.cell)
+        + Vec2::new(0.0, 14.0)
+}
+
+pub(crate) fn spawn_structure_impact(
+    commands: &mut Commands,
+    target: Vec2,
+    damage: i32,
+    source: Vec2,
+    attack_type: AttackType,
+) {
+    commands.spawn((
+        Sprite::from_color(Color::srgba(1.0, 0.24, 0.08, 0.34), Vec2::new(58.0, 46.0)),
+        Transform::from_xyz(target.x, target.y - 8.0, VFX_Z + 1.0)
+            .with_rotation(Quat::from_rotation_z(0.10)),
+        CombatVfx {
+            lifetime: 0.26,
+            max_lifetime: 0.26,
+            velocity: Vec2::ZERO,
+        },
+    ));
+    commands.spawn((
+        Sprite::from_color(Color::srgba(1.0, 0.78, 0.24, 0.28), Vec2::new(44.0, 34.0)),
+        Transform::from_xyz(target.x, target.y - 8.0, VFX_Z + 1.5)
+            .with_rotation(Quat::from_rotation_z(-0.08)),
+        CombatVfx {
+            lifetime: 0.18,
+            max_lifetime: 0.18,
+            velocity: Vec2::ZERO,
+        },
+    ));
+    spawn_combat_impact(commands, target, damage, source, attack_type, false);
+    let debris_color = Color::srgb(0.74, 0.56, 0.34);
+    for (idx, offset) in [
+        Vec2::new(-13.0, -5.0),
+        Vec2::new(15.0, -2.0),
+        Vec2::new(-3.0, 10.0),
+        Vec2::new(8.0, 6.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        commands.spawn((
+            Sprite::from_color(debris_color.with_alpha(0.82), Vec2::new(8.0, 3.0)),
+            Transform::from_xyz(target.x + offset.x, target.y + offset.y, VFX_Z + 2.0)
+                .with_rotation(Quat::from_rotation_z(idx as f32 * 0.78)),
+            CombatVfx {
+                lifetime: 0.42,
+                max_lifetime: 0.42,
+                velocity: Vec2::new(offset.x * 0.55, 22.0 + offset.y.abs()),
+            },
+        ));
+    }
+}
+
+pub(crate) fn spawn_combat_impact(
+    commands: &mut Commands,
+    target: Vec2,
+    damage: i32,
+    source: Vec2,
+    attack_type: AttackType,
+    castle_hit: bool,
+) {
+    let color = damage_number_color(attack_type, castle_hit);
+    let big_hit = damage >= if castle_hit { 12 } else { 8 };
+    let text = if big_hit {
+        format!("{damage}!")
+    } else {
+        damage.to_string()
+    };
+    spawn_damage_text(
+        commands,
+        &text,
+        target + Vec2::new(0.0, 29.0),
+        Color::srgb(0.05, 0.02, 0.01),
+        if castle_hit { 32.0 } else { 26.0 },
+        VFX_Z + 4.0,
+    );
+    spawn_damage_text(
+        commands,
+        &text,
+        target + Vec2::new(2.0, 27.0),
+        color,
+        if castle_hit { 31.0 } else { 25.0 },
+        VFX_Z + 5.0,
+    );
+
+    spawn_hit_burst(commands, target, attack_type, castle_hit);
+    spawn_attack_streak(commands, source, target, attack_type);
+}
+
+pub(crate) fn spawn_damage_text(
+    commands: &mut Commands,
+    text: &str,
+    pos: Vec2,
+    color: Color,
+    size: f32,
+    z: f32,
+) {
+    commands.spawn((
+        Text2d::new(text),
+        TextFont::from_font_size(size),
+        TextColor(color),
+        TextLayout::new_with_justify(Justify::Center),
+        Anchor::CENTER,
+        Transform::from_xyz(pos.x, pos.y, z),
+        CombatVfx {
+            lifetime: 0.95,
+            max_lifetime: 0.95,
+            velocity: Vec2::new(16.0, 58.0),
+        },
+    ));
+}
+
+pub(crate) fn spawn_bounty_text(commands: &mut Commands, pos: Vec2, amount: i32, team: Team) {
+    let text = format!("+{amount}g");
+    let accent = team_color(team);
+    spawn_floating_text(
+        commands,
+        &text,
+        pos + Vec2::new(0.0, 4.0),
+        Color::srgb(0.08, 0.04, 0.00),
+        30.0,
+        VFX_Z + 8.0,
+        Vec2::new(-7.0, 72.0),
+        1.12,
+    );
+    spawn_floating_text(
+        commands,
+        &text,
+        pos + Vec2::new(2.0, 6.0),
+        accent,
+        29.0,
+        VFX_Z + 9.0,
+        Vec2::new(-7.0, 72.0),
+        1.12,
+    );
+
+    for offset in [
+        Vec2::new(-16.0, -2.0),
+        Vec2::new(19.0, 3.0),
+        Vec2::new(4.0, 15.0),
+    ] {
+        commands.spawn((
+            Sprite::from_color(accent, Vec2::splat(7.0)),
+            Transform::from_xyz(pos.x + offset.x, pos.y + offset.y, VFX_Z + 7.0)
+                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)),
+            CombatVfx {
+                lifetime: 0.72,
+                max_lifetime: 0.72,
+                velocity: Vec2::new(offset.x * 0.42, 48.0 + offset.y.max(0.0)),
+            },
+        ));
+    }
+}
+
+pub(crate) fn spawn_floating_text(
+    commands: &mut Commands,
+    text: &str,
+    pos: Vec2,
+    color: Color,
+    size: f32,
+    z: f32,
+    velocity: Vec2,
+    lifetime: f32,
+) {
+    commands.spawn((
+        Text2d::new(text),
+        TextFont::from_font_size(size),
+        TextColor(color),
+        TextLayout::new_with_justify(Justify::Center),
+        Anchor::CENTER,
+        Transform::from_xyz(pos.x, pos.y, z),
+        CombatVfx {
+            lifetime,
+            max_lifetime: lifetime,
+            velocity,
+        },
+    ));
+}
+
+pub(crate) fn spawn_hit_burst(
+    commands: &mut Commands,
+    target: Vec2,
+    attack_type: AttackType,
+    castle_hit: bool,
+) {
+    let color = attack_type_color(attack_type);
+    let size = if castle_hit { 42.0 } else { 28.0 };
+    commands.spawn((
+        Sprite::from_color(color.with_alpha(0.82), Vec2::splat(size)),
+        Transform::from_xyz(target.x, target.y + 4.0, VFX_Z)
+            .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)),
+        CombatVfx {
+            lifetime: 0.32,
+            max_lifetime: 0.32,
+            velocity: Vec2::ZERO,
+        },
+    ));
+    commands.spawn((
+        Sprite::from_color(
+            Color::srgb(1.0, 0.93, 0.63).with_alpha(0.76),
+            Vec2::new(size, 5.0),
+        ),
+        Transform::from_xyz(target.x, target.y + 4.0, VFX_Z + 1.0),
+        CombatVfx {
+            lifetime: 0.24,
+            max_lifetime: 0.24,
+            velocity: Vec2::ZERO,
+        },
+    ));
+}
+
+pub(crate) fn spawn_attack_streak(
+    commands: &mut Commands,
+    source: Vec2,
+    target: Vec2,
+    attack_type: AttackType,
+) {
+    let delta = target - source;
+    let length = delta.length().clamp(18.0, 120.0);
+    if length <= 1.0 {
+        return;
+    }
+    let angle = delta.y.atan2(delta.x);
+    let center = source + delta * 0.55;
+    commands.spawn((
+        Sprite::from_color(
+            attack_type_color(attack_type).with_alpha(0.72),
+            Vec2::new(
+                length,
+                if attack_type == AttackType::Magic {
+                    5.0
+                } else {
+                    3.0
+                },
+            ),
+        ),
+        Transform::from_xyz(center.x, center.y + 10.0, VFX_Z - 1.0)
+            .with_rotation(Quat::from_rotation_z(angle)),
+        CombatVfx {
+            lifetime: 0.20,
+            max_lifetime: 0.20,
+            velocity: Vec2::ZERO,
+        },
+    ));
+}
+
+pub(crate) fn damage_number_color(attack_type: AttackType, castle_hit: bool) -> Color {
+    if castle_hit {
+        return Color::srgb(1.0, 0.42, 0.20);
+    }
+    match attack_type {
+        AttackType::Normal => Color::srgb(1.0, 0.86, 0.24),
+        AttackType::Pierce => Color::srgb(0.70, 0.94, 1.0),
+        AttackType::Magic => Color::srgb(0.95, 0.64, 1.0),
+        AttackType::Siege => Color::srgb(1.0, 0.56, 0.18),
+        AttackType::Chaos => Color::srgb(1.0, 0.18, 0.14),
+    }
+}

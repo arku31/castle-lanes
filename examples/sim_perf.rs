@@ -10,11 +10,17 @@ const DT: f32 = 1.0 / 30.0;
 const SAMPLE_TICKS: usize = 300;
 
 fn main() {
-    match std::env::var("CASTLE_LANES_FORMAT").unwrap_or_default().as_str() {
+    match std::env::var("CASTLE_LANES_FORMAT")
+        .unwrap_or_default()
+        .as_str()
+    {
         "json" => set_outgoing_format(PacketFormat::Json),
         _ => set_outgoing_format(PacketFormat::Bincode),
     }
-    println!("Castle Lanes sim perf (format: {:?}), release build recommended", castle_lanes::net::outgoing_format());
+    println!(
+        "Castle Lanes sim perf (format: {:?}), release build recommended",
+        castle_lanes::net::outgoing_format()
+    );
     println!("ticks per sample: {SAMPLE_TICKS}, fixed dt: {DT:.5}s");
     println!();
 

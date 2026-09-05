@@ -448,7 +448,10 @@ pub fn encode<T: Serialize>(packet: &T) -> Result<Vec<u8>, PacketError> {
     encode_as(packet, outgoing_format())
 }
 
-pub fn encode_as<T: Serialize + ?Sized>(packet: &T, format: PacketFormat) -> Result<Vec<u8>, PacketError> {
+pub fn encode_as<T: Serialize + ?Sized>(
+    packet: &T,
+    format: PacketFormat,
+) -> Result<Vec<u8>, PacketError> {
     let payload = match format {
         PacketFormat::Json => serde_json::to_vec(packet)?,
         PacketFormat::Bincode => bincode::serialize(packet)?,
