@@ -21,8 +21,10 @@ Phase 1 progress:
 - [x] Binary encoding (item 4) — tagged datagrams (bincode default, JSON via
       --legacy-json, untagged-JSON fallback on decode); ~3.8x smaller packets,
       30x faster encode; docs/bandwidth.md has before/after measurements
-- [ ] Client module refactor (item 8)
-- [ ] Settings panel (item 10)
+- [x] Settings panel (item 10) — O opens volume/mute/fullscreen/resolution,
+      persisted to config/client_settings.json
+- [x] Client module refactor (item 8) — client.rs split into
+      src/bin/client/{main,net,scene,ui,input,vfx,audio}.rs
 
 Screenshots for the README remain blocked: ZCode needs Screen Recording permission (System Settings → Privacy & Security → Screen Recording → grant to ZCode Computer Use, then restart ZCode).
 Original baseline: commit `a79f462` + working tree (landed as `469d93d`).
