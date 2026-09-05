@@ -1,18 +1,22 @@
 #!/bin/bash
+# Batch-generate Vanguard unit frame atlases via `codex exec` (built-in image
+# tool). See docs/kb/image-generation.md. macOS bash 3.2 compatible.
 set -u
-cd /Volumes/Projects/cf6
-declare -A UNITS=(
-  [vanguard_archer]="a nimble human archer in blue-and-leather light armor with a longbow and quiver"
-  [vanguard_pikeman]="a human pikeman in blue half-plate armor bristling with a long pike"
-  [vanguard_shieldbearer]="a broad human shieldbearer in heavy blue-and-steel plate behind a towering tower shield"
-  [vanguard_battle_cleric]="a human battle cleric in white-and-blue robes with gold trim, wielding a war mace and holy tome"
-  [vanguard_lancer]="a human lancer in blue-and-steel scale armor wielding a long lance"
-  [vanguard_ballista]="a wooden-and-steel siege ballista on a wheeled frame operated by a single blue-uniformed human engineer"
-  [vanguard_arbalester]="a human crossbowman in blue-and-steel light plate with a heavy arbalest crossbow"
+cd "$(dirname "$0")/.."
+mkdir -p assets/art/units/atlases_raw
+
+ITEMS=(
+  "vanguard_archer|a nimble human archer in blue-and-leather light armor with a longbow and quiver"
+  "vanguard_pikeman|a human pikeman in blue half-plate armor bristling with a long pike"
+  "vanguard_shieldbearer|a broad human shieldbearer in heavy blue-and-steel plate behind a towering tower shield"
+  "vanguard_battle_cleric|a human battle cleric in white-and-blue robes with gold trim, wielding a war mace and holy tome"
+  "vanguard_lancer|a human lancer in blue-and-steel scale armor wielding a long lance"
+  "vanguard_ballista|a wooden-and-steel siege ballista on a wheeled frame operated by a single blue-uniformed human engineer"
+  "vanguard_arbalester|a human crossbowman in blue-and-steel light plate with a heavy arbalest crossbow"
 )
-ORDER=(vanguard_archer vanguard_pikeman vanguard_shieldbearer vanguard_battle_cleric vanguard_lancer vanguard_ballista vanguard_arbalester)
-for name in "${ORDER[@]}"; do
-  desc="${UNITS[$name]}"
+for item in "${ITEMS[@]}"; do
+  name="${item%%|*}"
+  desc="${item#*|}"
   out="assets/art/units/atlases_raw/${name}_frames.png"
   if [ -f "$out" ]; then echo "skip $name (exists)"; continue; fi
   echo "=== generating $name ==="
@@ -27,6 +31,11 @@ Frames left to right: (1) idle stance, (2) walking mid-step, (3) attack wind-up 
 The SAME identical character in all 5 frames: identical armor, colors, proportions, scale and ground line; only the pose changes. Generous padding around each cell.
 
 Save the final image exactly to $out" > "/tmp/codex_${name}.log" 2>&1
-  echo "=== $name exit: $? ($out)"
+  status=$?
+  echo "=== $name exit: $status"
+  if [ $status -ne 0 ] || [ ! -f "$out" ]; then
+    echo "=== $name FAILED - aborting batch" >&2
+    exit 1
+  fi
 done
 echo "BATCH COMPLETE"
