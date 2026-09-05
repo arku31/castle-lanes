@@ -104,18 +104,48 @@ pub(crate) fn redraw_game_ui(
                 &mut commands,
                 result,
                 Vec2::new(0.0, 118.0),
-                32.0,
-                TEXT_GOLD,
+                42.0,
+                if snapshot.winner == net.team {
+                    Color::srgb(1.0, 0.85, 0.2)
+                } else {
+                    Color::srgb(0.75, 0.75, 0.78)
+                },
+                51.0,
+                Anchor::CENTER,
+                Justify::Center,
+            );
+            let castle_line = snapshot
+                .castles
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{} {:?}   HP {}/{}",
+                        team_race(snapshot, c.team)
+                            .map(|r| balance.race(r).name.clone())
+                            .unwrap_or_default(),
+                        c.team,
+                        c.health.max(0),
+                        c.max_health
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("   |   ");
+            spawn_ui_label(
+                &mut commands,
+                &castle_line,
+                Vec2::new(0.0, 80.0),
+                13.0,
+                TEXT_PARCHMENT,
                 51.0,
                 Anchor::CENTER,
                 Justify::Center,
             );
             spawn_ui_label(
                 &mut commands,
-                "Press R on both clients for rematch",
-                Vec2::new(0.0, 76.0),
-                13.0,
-                TEXT_PARCHMENT,
+                "R = rematch on both clients   |   H = rules   |   O = settings",
+                Vec2::new(0.0, 52.0),
+                12.0,
+                Color::srgba(0.6, 0.55, 0.45, 0.9),
                 51.0,
                 Anchor::CENTER,
                 Justify::Center,
