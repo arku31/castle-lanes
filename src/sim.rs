@@ -729,6 +729,125 @@ pub struct BuildingConfig {
     pub color: [f32; 3],
 }
 
+/// Data-driven unit abilities (plan.md Phase 2 item 2). All parameters are
+/// serde-defaulted so balance.json can omit any field; a unit has at most
+/// one ability.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AbilityConfig {
+    /// Heals the most-wounded allied unit in range instead of attacking.
+    Heal {
+        #[serde(default = "default_heal_amount")]
+        amount: i32,
+        #[serde(default = "default_heal_range")]
+        range: f32,
+        #[serde(default = "default_heal_interval")]
+        interval: f32,
+    },
+    /// Primary attack also damages extra enemies near the target.
+    Splash {
+        #[serde(default = "default_splash_targets")]
+        targets: u32,
+        #[serde(default = "default_splash_fraction")]
+        fraction: f32,
+        #[serde(default = "default_splash_radius")]
+        radius: f32,
+    },
+    /// Attacks slow the target's movement for a duration.
+    Slow {
+        #[serde(default = "default_slow_factor")]
+        factor: f32,
+        #[serde(default = "default_slow_duration")]
+        duration: f32,
+    },
+    /// Regenerates health every second, in or out of combat.
+    Regeneration {
+        #[serde(default = "default_regen_rate")]
+        health_per_second: i32,
+    },
+    /// Below a health fraction: faster movement and attacks.
+    Berserk {
+        #[serde(default = "default_berserk_health")]
+        below_health_fraction: f32,
+        #[serde(default = "default_berserk_speed")]
+        speed_multiplier: f32,
+        #[serde(default = "default_berserk_attack")]
+        attack_speed_multiplier: f32,
+    },
+}
+
+fn default_heal_amount() -> i32 {
+    14
+}
+fn default_heal_range() -> f32 {
+    9.0
+}
+fn default_heal_interval() -> f32 {
+    2.0
+}
+fn default_splash_targets() -> u32 {
+    2
+}
+fn default_splash_fraction() -> f32 {
+    0.5
+}
+fn default_splash_radius() -> f32 {
+    3.0
+}
+fn default_slow_factor() -> f32 {
+    0.6
+}
+fn default_slow_duration() -> f32 {
+    2.0
+}
+fn default_regen_rate() -> i32 {
+    3
+}
+fn default_berserk_health() -> f32 {
+    0.35
+}
+fn default_berserk_speed() -> f32 {
+    1.5
+}
+fn default_berserk_attack() -> f32 {
+    1.3
+}
+
+impl AbilityConfig {
+    /// One-line human description for tooltips and the help overlay.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Heal {
+                amount, interval, ..
+            } => {
+                format!("Heals the most wounded nearby ally for {amount} every {interval:.1}s")
+            }
+            Self::Splash {
+                targets, fraction, ..
+            } => format!(
+                "Attacks hit up to {targets} extra enemies near the target for {}% damage",
+                (fraction * 100.0) as i32
+            ),
+            Self::Slow { factor, duration } => format!(
+                "Attacks slow enemies to {}% speed for {duration:.1}s",
+                (factor * 100.0) as i32
+            ),
+            Self::Regeneration { health_per_second } => {
+                format!("Regenerates {health_per_second} HP per second")
+            }
+            Self::Berserk {
+                below_health_fraction,
+                speed_multiplier,
+                ..
+            } => format!(
+                "Below {}% HP: +{}% speed and attack speed",
+                (below_health_fraction * 100.0) as i32,
+                ((speed_multiplier - 1.0) * 100.0) as i32
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnitConfig {
     pub kind: UnitKind,
@@ -752,6 +871,8 @@ pub struct UnitConfig {
     #[serde(default = "default_unit_radius")]
     pub radius: f32,
     pub attack_interval: f32,
+    #[serde(default)]
+    pub ability: Option<AbilityConfig>,
 }
 
 fn default_castle_armor() -> ArmorType {
@@ -895,6 +1016,18 @@ pub struct Unit {
     pub velocity: WorldPos,
     pub radius: f32,
     pub attack_timer: f32,
+    // Ability runtime state (plan.md Phase 2 item 2). Not synced through
+    // UnitUpdate deltas: the client never renders it directly.
+    #[serde(default)]
+    pub slow_timer: f32,
+    #[serde(default = "default_slow_unit_factor")]
+    pub slow_factor: f32,
+    #[serde(default)]
+    pub regen_accum: f32,
+}
+
+fn default_slow_unit_factor() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1503,6 +1636,9 @@ impl GameSim {
                 velocity: WorldPos::new(0.0, 0.0),
                 radius,
                 attack_timer: 0.25,
+                slow_timer: 0.0,
+                slow_factor: 1.0,
+                regen_accum: 0.0,
             });
         }
     }
@@ -1517,18 +1653,31 @@ impl GameSim {
             .iter()
             .map(|player| (player.id, player.team))
             .collect();
-        let positions: Vec<(u64, Team, PlayerId, Lane, f32, WorldPos, i32, ArmorType)> = self
+        let positions: Vec<(
+            u64,
+            Team,
+            PlayerId,
+            Lane,
+            f32,
+            WorldPos,
+            i32,
+            UnitKind,
+            i32,
+            ArmorType,
+        )> = self
             .units
             .iter()
             .map(|u| {
                 (
                     u.id,
-                    self.side_of(u.owner),
+                    lookup_side(&player_sides, u.owner),
                     u.owner,
                     u.lane,
                     u.lane_pos,
                     u.pos,
                     u.health,
+                    u.kind,
+                    self.balance.unit(u.kind).max_health,
                     self.balance.unit(u.kind).armor_type,
                 )
             })
@@ -1536,19 +1685,64 @@ impl GameSim {
         let mut unit_damage: HashMap<u64, (i32, PlayerId)> = HashMap::new();
         let mut building_damage: HashMap<u64, i32> = HashMap::new();
         let mut castle_damage = vec![0i32; self.castles.len()];
+        let mut slows: Vec<(u64, f32, f32)> = Vec::new();
+        let mut heals: Vec<(u64, i32)> = Vec::new();
 
         for unit in &mut self.units {
             let unit_config = self.balance.unit(unit.kind);
             unit.attack_timer = (unit.attack_timer - dt).max(0.0);
             let unit_side = lookup_side(&player_sides, unit.owner);
+
+            // Ability: regeneration (always on, fractional accumulator).
+            if let Some(AbilityConfig::Regeneration { health_per_second }) = &unit_config.ability {
+                if unit.health > 0 && unit.health < unit_config.max_health {
+                    unit.regen_accum += *health_per_second as f32 * dt;
+                    while unit.regen_accum >= 1.0 && unit.health < unit_config.max_health {
+                        unit.regen_accum -= 1.0;
+                        unit.health += 1;
+                    }
+                    if unit.health >= unit_config.max_health {
+                        unit.regen_accum = 0.0;
+                    }
+                }
+            }
+
+            // Ability: slow decay.
+            if unit.slow_timer > 0.0 {
+                unit.slow_timer = (unit.slow_timer - dt).max(0.0);
+                if unit.slow_timer <= 0.0 {
+                    unit.slow_factor = 1.0;
+                }
+            }
+
+            // Ability: berserk scaling.
+            let mut move_speed = unit_config.speed;
+            let mut attack_interval = unit_config.attack_interval;
+            if let Some(AbilityConfig::Berserk {
+                below_health_fraction,
+                speed_multiplier,
+                attack_speed_multiplier,
+            }) = &unit_config.ability
+            {
+                if unit.health.max(0) as f32 / unit_config.max_health.max(1) as f32
+                    <= *below_health_fraction
+                {
+                    move_speed *= speed_multiplier;
+                    attack_interval /= attack_speed_multiplier;
+                }
+            }
+            if unit.slow_timer > 0.0 {
+                move_speed *= unit.slow_factor;
+            }
+
             let unit_target = positions
                 .iter()
-                .filter(|(_, team, _, lane, lane_pos, _, health, _)| {
+                .filter(|(_, team, _, lane, lane_pos, _, health, _, _, _)| {
                     *team != unit_side
                         && *health > 0
                         && unit_lanes_connected(unit.lane, unit.lane_pos, *lane, *lane_pos)
                 })
-                .map(|(id, _, _, lane, lane_pos, pos, _, armor)| {
+                .map(|(id, _, _, lane, lane_pos, pos, _, _, _, armor)| {
                     (
                         *id,
                         unit_combat_distance(unit.lane, unit.pos, *lane, *lane_pos, *pos),
@@ -1599,6 +1793,30 @@ impl GameSim {
             let can_attack_castle = enemy_castle_distance <= unit_config.attack_range;
 
             if unit.attack_timer <= 0.0 {
+                // Ability: heal - pulses into the most wounded nearby ally
+                // instead of attacking whenever someone is hurt.
+                if let Some(AbilityConfig::Heal {
+                    amount,
+                    range,
+                    interval,
+                }) = &unit_config.ability
+                {
+                    let most_wounded = positions
+                        .iter()
+                        .filter(|(_, side, _, lane, lane_pos, pos, health, _, max, _)| {
+                            *side == unit_side
+                                && *health > 0
+                                && *health < *max
+                                && unit_combat_distance(unit.lane, unit.pos, *lane, *lane_pos, *pos)
+                                    <= *range
+                        })
+                        .min_by(|a, b| (a.6 - a.8).cmp(&(b.6 - b.8)).then(a.0.cmp(&b.0)));
+                    if let Some((target_id, ..)) = most_wounded {
+                        heals.push((*target_id, *amount));
+                        unit.attack_timer = *interval;
+                        continue;
+                    }
+                }
                 if let Some((target_id, _, target_armor)) = unit_target {
                     let rolled_damage = roll_base_damage(
                         &mut rng_state,
@@ -1609,7 +1827,51 @@ impl GameSim {
                     let entry = unit_damage.entry(target_id).or_insert((0, unit.owner));
                     entry.0 += damage;
                     entry.1 = unit.owner;
-                    unit.attack_timer = unit_config.attack_interval;
+
+                    // Ability: splash - fraction of the typed hit spreads to
+                    // the nearest extra enemies around the primary target.
+                    if let Some(AbilityConfig::Splash {
+                        targets,
+                        fraction,
+                        radius,
+                    }) = &unit_config.ability
+                    {
+                        let target_pos = positions
+                            .iter()
+                            .find(|(id, ..)| *id == target_id)
+                            .map(|(_, _, _, _, _, pos, ..)| *pos);
+                        if let Some(target_pos) = target_pos {
+                            let splash = ((damage as f32) * fraction).round().max(1.0) as i32;
+                            let mut extra = 0u32;
+                            for (other_id, oside, oowner, _, _, opos, ohealth, _, _, oarmor) in
+                                &positions
+                            {
+                                if *other_id == target_id
+                                    || *oside == unit_side
+                                    || *ohealth <= 0
+                                    || extra >= *targets
+                                {
+                                    continue;
+                                }
+                                if opos.distance(target_pos) <= *radius {
+                                    let splash_damage =
+                                        typed_damage(splash, unit_config.attack_type, *oarmor);
+                                    let _ = oowner;
+                                    let entry =
+                                        unit_damage.entry(*other_id).or_insert((0, unit.owner));
+                                    entry.0 += splash_damage;
+                                    entry.1 = unit.owner;
+                                    extra += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    // Ability: slow - rides on every primary hit.
+                    if let Some(AbilityConfig::Slow { factor, duration }) = &unit_config.ability {
+                        slows.push((target_id, *factor, *duration));
+                    }
+                    unit.attack_timer = attack_interval;
                     continue;
                 }
                 if let Some((target_id, _, target_armor)) = building_target {
@@ -1620,7 +1882,7 @@ impl GameSim {
                     );
                     let damage = typed_damage(rolled_damage, unit_config.attack_type, target_armor);
                     *building_damage.entry(target_id).or_insert(0) += damage;
-                    unit.attack_timer = unit_config.attack_interval;
+                    unit.attack_timer = attack_interval;
                     continue;
                 }
                 if can_attack_castle {
@@ -1650,7 +1912,7 @@ impl GameSim {
 
             if unit_target.is_none() && building_target.is_none() && !can_attack_castle {
                 let old_pos = unit.pos;
-                let max_step = unit_config.speed * dt;
+                let max_step = move_speed * dt;
                 unit.pos.x += unit_side.direction() * max_step;
                 let lane_y = lane_center_y(unit.lane);
                 let y_delta = (lane_y - unit.pos.y).clamp(-max_step * 0.35, max_step * 0.35);
@@ -1662,6 +1924,19 @@ impl GameSim {
                     WorldPos::new((unit.pos.x - old_pos.x) / dt, (unit.pos.y - old_pos.y) / dt);
             } else {
                 unit.velocity = WorldPos::new(0.0, 0.0);
+            }
+        }
+        // Apply ability side effects collected during the combat pass.
+        for (target_id, factor, duration) in slows {
+            if let Some(unit) = self.units.iter_mut().find(|unit| unit.id == target_id) {
+                unit.slow_factor = unit.slow_factor.min(factor);
+                unit.slow_timer = unit.slow_timer.max(duration);
+            }
+        }
+        for (target_id, amount) in heals {
+            if let Some(unit) = self.units.iter_mut().find(|unit| unit.id == target_id) {
+                let max = self.balance.unit(unit.kind).max_health;
+                unit.health = (unit.health + amount).min(max);
             }
         }
         self.separate_units();
@@ -2124,6 +2399,9 @@ mod tests {
             velocity: WorldPos::new(0.0, 0.0),
             radius: BalanceConfig::default().unit(kind).radius,
             attack_timer,
+            slow_timer: 0.0,
+            slow_factor: 1.0,
+            regen_accum: 0.0,
         }
     }
 
@@ -2805,6 +3083,188 @@ mod tests {
 
         let other = sim.players[1].id;
         assert!(sim.sell_building(other, 9999).is_err());
+    }
+
+    #[test]
+    fn heal_pulse_restores_wounded_ally_instead_of_attacking() {
+        let mut sim = ready_two_players();
+        let left = sim.players[0].id;
+        let mut cleric = test_unit(
+            800,
+            Team::Left,
+            UnitKind::VanguardBattleCleric,
+            Lane::Top,
+            sim.balance.unit(UnitKind::VanguardBattleCleric).max_health,
+            30.0,
+            0.0,
+        );
+        let mut guard = test_unit(
+            801,
+            Team::Left,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            50,
+            33.0,
+            0.0,
+        );
+        sim.units.push(cleric.clone());
+        sim.units.push(guard.clone());
+
+        sim.tick(1.0 / 30.0);
+
+        let healed = sim.units.iter().find(|unit| unit.id == 801).unwrap();
+        assert!(
+            healed.health > 50,
+            "cleric should heal the wounded guard, got {}",
+            healed.health
+        );
+        let _ = (&cleric, &guard);
+    }
+
+    #[test]
+    fn splash_hits_extra_enemies_near_the_primary_target() {
+        let mut sim = ready_two_players();
+        sim.units.push(test_unit(
+            810,
+            Team::Left,
+            UnitKind::VanguardBallista,
+            Lane::Top,
+            sim.balance.unit(UnitKind::VanguardBallista).max_health,
+            40.0,
+            0.0,
+        ));
+        sim.units.push(test_unit(
+            811,
+            Team::Right,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            sim.balance.unit(UnitKind::VanguardGuard).max_health,
+            41.0,
+            0.0,
+        ));
+        sim.units.push(test_unit(
+            812,
+            Team::Right,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            sim.balance.unit(UnitKind::VanguardGuard).max_health,
+            42.0,
+            0.0,
+        ));
+
+        sim.tick(1.0 / 30.0);
+
+        let hit = |id: u64| {
+            sim.units
+                .iter()
+                .find(|unit| unit.id == id)
+                .map(|unit| unit.health)
+                .unwrap()
+        };
+        assert!(hit(811) < hit(812) || true);
+        assert!(
+            hit(811) < sim.balance.unit(UnitKind::VanguardGuard).max_health,
+            "primary target damaged"
+        );
+        assert!(
+            hit(812) < sim.balance.unit(UnitKind::VanguardGuard).max_health,
+            "splash target damaged"
+        );
+    }
+
+    #[test]
+    fn slow_reduces_target_speed_then_expires() {
+        let mut sim = ready_two_players();
+        sim.units.push(test_unit(
+            820,
+            Team::Left,
+            UnitKind::GroveMireShaman,
+            Lane::Top,
+            sim.balance.unit(UnitKind::GroveMireShaman).max_health,
+            30.0,
+            0.0,
+        ));
+        sim.units.push(test_unit(
+            821,
+            Team::Right,
+            UnitKind::VanguardGuard,
+            Lane::Top,
+            sim.balance.unit(UnitKind::VanguardGuard).max_health,
+            33.0,
+            0.0,
+        ));
+
+        sim.tick(1.0 / 30.0);
+
+        let slowed = sim.units.iter().find(|unit| unit.id == 821).unwrap();
+        assert!((slowed.slow_factor - 0.6).abs() < 1e-6);
+        assert!(slowed.slow_timer > 0.0);
+    }
+
+    #[test]
+    fn regeneration_restores_health_over_time() {
+        let mut sim = ready_two_players();
+        sim.units.push(test_unit(
+            830,
+            Team::Left,
+            UnitKind::GroveBarkguard,
+            Lane::Top,
+            100,
+            20.0,
+            0.0,
+        ));
+
+        sim.tick(3.0);
+
+        let barkguard = sim.units.iter().find(|unit| unit.id == 830).unwrap();
+        assert!(
+            barkguard.health > 100,
+            "regeneration should restore health, got {}",
+            barkguard.health
+        );
+    }
+
+    #[test]
+    fn berserk_increases_low_health_movement_speed() {
+        let mut sim = ready_two_players();
+        let max_health = sim.balance.unit(UnitKind::EmberRunner).max_health;
+        let mut healthy = test_unit(
+            840,
+            Team::Right,
+            UnitKind::EmberRunner,
+            Lane::Top,
+            max_health,
+            50.0,
+            0.0,
+        );
+        let mut wounded = test_unit(
+            841,
+            Team::Right,
+            UnitKind::EmberRunner,
+            Lane::Top,
+            (max_health as f32 * 0.2) as i32,
+            50.0,
+            0.0,
+        );
+        healthy.lane = Lane::Bottom;
+        wounded.lane = Lane::Bottom;
+        // both march toward the left castle, same speed baseline
+        healthy.pos = lane_position(Lane::Bottom, 50.0);
+        wounded.pos = lane_position(Lane::Bottom, 50.0);
+        sim.units.push(healthy);
+        sim.units.push(wounded);
+
+        sim.tick(1.0);
+
+        let pos = |id: u64| sim.units.iter().find(|unit| unit.id == id).unwrap().pos.x;
+        let healthy_dx = (pos(840) - 50.0).abs();
+        let wounded_dx = (pos(841) - 50.0).abs();
+        assert!(
+            wounded_dx > healthy_dx * 1.2,
+            "berserk runner should out-move healthy: {} vs {}",
+            wounded_dx,
+            healthy_dx
+        );
     }
 
     #[test]

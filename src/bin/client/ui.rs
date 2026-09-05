@@ -764,7 +764,7 @@ pub(crate) fn selected_object_details(
             }
             let config = balance.unit(unit.kind);
             Some(format!(
-                "{} {:?} {}\nHP {}/{}   {} {} dmg\nMv {:.1}   AS {:.2}/s   AtkR {:.1}\nArmor {}   Bounty {}g",
+                "{} {:?} {}\nHP {}/{}   {} {} dmg\nMv {:.1}   AS {:.2}/s   AtkR {:.1}\nArmor {}   Bounty {}g{}",
                 config.name,
                 side_of_player(snapshot, unit.owner),
                 config.attack_mode.label(),
@@ -776,7 +776,8 @@ pub(crate) fn selected_object_details(
                 attacks_per_second(config.attack_interval),
                 config.attack_range,
                 config.armor_type.label(),
-                config.bounty
+                config.bounty,
+                ability_line(config),
             ))
         }
         SelectedObject::Building(id) => {
@@ -926,7 +927,7 @@ pub(crate) fn building_tooltip_text(balance: &BalanceConfig, kind: BuildingKind)
     if let Some(unit_kind) = config.spawned_unit {
         let unit = balance.unit(unit_kind);
         format!(
-            "{}\nCost: {} gold   Spawns every {:.1}s\nProduces: {} ({})   Bounty: {}g\nDamage: {} {}   Armor: {}\n{}\nMove: {:.1}   AtkR: {:.1}   AS: {:.2}/s",
+            "{}\nCost: {} gold   Spawns every {:.1}s\nProduces: {} ({})   Bounty: {}g\nDamage: {} {}   Armor: {}\n{}\n{}\nMove: {:.1}   AtkR: {:.1}   AS: {:.2}/s",
             config.name,
             config.cost,
             config.spawn_interval.unwrap_or_default(),
@@ -937,6 +938,7 @@ pub(crate) fn building_tooltip_text(balance: &BalanceConfig, kind: BuildingKind)
             unit.attack_type.label(),
             unit.armor_type.label(),
             counter_summary(unit.attack_type),
+            ability_line(unit),
             unit.speed,
             unit.attack_range,
             attacks_per_second(unit.attack_interval),
@@ -1341,7 +1343,15 @@ pub(crate) fn counter_summary(attack: AttackType) -> String {
     )
 }
 
-pub(crate) fn attacks_per_second(attack_interval: f32) -> f32 {
+/// "Ability: ..." tooltip line when the unit has one (plan.md Phase 2 item 2).
+fn ability_line(config: &castle_lanes::sim::UnitConfig) -> String {
+    match &config.ability {
+        Some(ability) => format!("Ability: {}", ability.describe()),
+        None => String::new(),
+    }
+}
+
+fn attacks_per_second(attack_interval: f32) -> f32 {
     if attack_interval <= f32::EPSILON {
         return 0.0;
     }

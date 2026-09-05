@@ -119,6 +119,9 @@ fn seed_team_units(sim: &mut GameSim, owner: Team, count: usize, first_id: u64) 
             velocity: WorldPos::new(0.0, 0.0),
             radius: config.radius,
             attack_timer: 0.15 + (idx % 11) as f32 * 0.03,
+            slow_timer: 0.0,
+            slow_factor: 1.0,
+            regen_accum: 0.0,
         });
     }
 }

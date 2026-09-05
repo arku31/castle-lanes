@@ -557,6 +557,9 @@ mod tests {
             velocity: crate::sim::WorldPos::new(0.0, 0.0),
             radius: sim.balance.unit(UnitKind::VanguardGuard).radius,
             attack_timer: 0.4,
+            slow_timer: 0.0,
+            slow_factor: 1.0,
+            regen_accum: 0.0,
         });
         let previous = sim.snapshot();
 
@@ -574,6 +577,9 @@ mod tests {
             velocity: crate::sim::WorldPos::new(0.0, 0.0),
             radius: sim.balance.unit(UnitKind::EmberRunner).radius,
             attack_timer: 0.2,
+            slow_timer: 0.0,
+            slow_factor: 1.0,
+            regen_accum: 0.0,
         });
         let current = sim.snapshot();
 
@@ -681,6 +687,9 @@ mod tests {
             velocity: crate::sim::WorldPos::new(0.0, 0.0),
             radius: 0.65,
             attack_timer: 0.0,
+            slow_timer: 0.0,
+            slow_factor: 1.0,
+            regen_accum: 0.0,
         });
         sim.units.push(crate::sim::Unit {
             id: 901,
@@ -693,6 +702,9 @@ mod tests {
             velocity: crate::sim::WorldPos::new(0.0, 0.0),
             radius: 0.65,
             attack_timer: 0.0,
+            slow_timer: 0.0,
+            slow_factor: 1.0,
+            regen_accum: 0.0,
         });
         let snapshot = sim.snapshot();
         let mut seen = std::collections::HashMap::new();
