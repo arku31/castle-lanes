@@ -6,7 +6,7 @@
 //! both a replay file and a telemetry source for the balance loop (§6).
 
 use crate::sim::{
-    BuildingKind, GameSim, Lane, MatchPhase, RaceKind, Team, UnitKind, BuildZone, GridCell,
+    BuildZone, BuildingKind, GameSim, GridCell, Lane, MatchPhase, RaceKind, Team, UnitKind,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -36,15 +36,21 @@ pub struct RecordedPlayer {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "cmd", content = "args")]
 pub enum RecordedIntent {
-    SetRace { race: RaceKind },
-    SetReady { ready: bool },
+    SetRace {
+        race: RaceKind,
+    },
+    SetReady {
+        ready: bool,
+    },
     PlaceBuilding {
         kind: BuildingKind,
         lane: Lane,
         zone: BuildZone,
         cell: GridCell,
     },
-    SellBuilding { building_id: u64 },
+    SellBuilding {
+        building_id: u64,
+    },
     Surrender,
     VoteRematch,
 }

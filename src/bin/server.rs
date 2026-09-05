@@ -3,7 +3,7 @@ use castle_lanes::net::{
     SnapshotDelta, decode_client, diff_snapshot, encode, entityless_snapshot,
     filter_snapshot_for_viewer,
 };
-use castle_lanes::record::{write_record, MatchRecorder, RecordedIntent};
+use castle_lanes::record::{MatchRecorder, RecordedIntent, write_record};
 use castle_lanes::sim::{
     BalanceConfig, DEFAULT_BALANCE_PATH, GameSim, MatchPhase, MatchSnapshot, PlayerId,
 };
@@ -232,7 +232,11 @@ fn handle_packet(
         ClientPacket::SetReady { player_id, ready } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.set_ready(player_id, ready)?;
-            room.recorder.record_command(&room.sim, player_id.0, RecordedIntent::SetReady { ready });
+            room.recorder.record_command(
+                &room.sim,
+                player_id.0,
+                RecordedIntent::SetReady { ready },
+            );
         }
         ClientPacket::SetRace { player_id, race } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;
