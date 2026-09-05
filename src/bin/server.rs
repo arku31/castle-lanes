@@ -296,6 +296,35 @@ fn handle_packet(
             room.recorder
                 .record_command(&room.sim, player_id.0, RecordedIntent::Surrender);
         }
+        ClientPacket::UpgradeBuilding {
+            player_id,
+            building_id,
+            to,
+            seq,
+        } => {
+            let duplicate = seq.is_some()
+                && clients
+                    .get(&addr)
+                    .is_some_and(|session| session.last_applied_seq == seq);
+            if duplicate {
+                send_packet(socket, addr, &ServerPacket::Ack { seq })?;
+                return Ok(());
+            }
+            let room = room_for_player(rooms, clients, addr, player_id)?;
+            room.sim
+                .upgrade_building(player_id, building_id, to)?;
+            room.recorder.record_command(
+                &room.sim,
+                player_id.0,
+                RecordedIntent::UpgradeBuilding { to },
+            );
+            if let Some(session) = clients.get_mut(&addr) {
+                session.last_applied_seq = seq;
+            }
+            if seq.is_some() {
+                send_packet(socket, addr, &ServerPacket::Ack { seq })?;
+            }
+        }
         ClientPacket::SellBuilding {
             player_id,
             building_id,

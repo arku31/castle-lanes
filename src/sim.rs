@@ -152,6 +152,14 @@ pub enum BuildingKind {
     EmberBlazeStable,
     EmberSmokeAltar,
     EmberInfernoEngine,
+    // Branch upgrades (Phase 2 item 3): reached only through the upgrade
+    // command, never placed directly.
+    VanguardArbalestTower,
+    VanguardArcaneSpire,
+    GroveBrambleWarren,
+    GroveSpitefen,
+    EmberMagmaForge,
+    EmberAshPack,
 }
 
 impl BuildingKind {
@@ -181,6 +189,11 @@ impl BuildingKind {
             | BuildingKind::EmberBlazeStable
             | BuildingKind::EmberSmokeAltar
             | BuildingKind::EmberInfernoEngine => RaceKind::Ember,
+            BuildingKind::VanguardArbalestTower | BuildingKind::VanguardArcaneSpire => {
+                RaceKind::Vanguard
+            }
+            BuildingKind::GroveBrambleWarren | BuildingKind::GroveSpitefen => RaceKind::Grove,
+            BuildingKind::EmberMagmaForge | BuildingKind::EmberAshPack => RaceKind::Ember,
         }
     }
 
@@ -210,6 +223,12 @@ impl BuildingKind {
             BuildingKind::EmberBlazeStable => "Blaze Stable",
             BuildingKind::EmberSmokeAltar => "Smoke Altar",
             BuildingKind::EmberInfernoEngine => "Inferno Engine",
+            BuildingKind::VanguardArbalestTower => "Arbalest Tower",
+            BuildingKind::VanguardArcaneSpire => "Arcane Spire",
+            BuildingKind::GroveBrambleWarren => "Bramble Warren",
+            BuildingKind::GroveSpitefen => "Spitefen",
+            BuildingKind::EmberMagmaForge => "Magma Forge",
+            BuildingKind::EmberAshPack => "Ash Pack",
         }
     }
 
@@ -279,6 +298,12 @@ pub enum UnitKind {
     EmberFireLancer,
     EmberSmokeWitch,
     EmberCinderEngine,
+    VanguardArbalester,
+    VanguardArcanist,
+    GroveBrambleguard,
+    GroveSpitefang,
+    EmberMagmaBrute,
+    EmberAshStalker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -591,21 +616,27 @@ impl UnitKind {
             | UnitKind::VanguardShieldbearer
             | UnitKind::VanguardBattleCleric
             | UnitKind::VanguardLancer
-            | UnitKind::VanguardBallista => RaceKind::Vanguard,
+            | UnitKind::VanguardBallista
+            | UnitKind::VanguardArbalester
+            | UnitKind::VanguardArcanist => RaceKind::Vanguard,
             UnitKind::GroveBruiser
             | UnitKind::GroveNeedler
             | UnitKind::GroveSproutling
             | UnitKind::GroveBarkguard
             | UnitKind::GroveMireShaman
             | UnitKind::GroveVineStalker
-            | UnitKind::GroveTreantColossus => RaceKind::Grove,
+            | UnitKind::GroveTreantColossus
+            | UnitKind::GroveBrambleguard
+            | UnitKind::GroveSpitefang => RaceKind::Grove,
             UnitKind::EmberRunner
             | UnitKind::EmberCaster
             | UnitKind::EmberSparkImp
             | UnitKind::EmberObsidianGuard
             | UnitKind::EmberFireLancer
             | UnitKind::EmberSmokeWitch
-            | UnitKind::EmberCinderEngine => RaceKind::Ember,
+            | UnitKind::EmberCinderEngine
+            | UnitKind::EmberMagmaBrute
+            | UnitKind::EmberAshStalker => RaceKind::Ember,
         }
     }
 
@@ -632,6 +663,12 @@ impl UnitKind {
             UnitKind::EmberFireLancer => "Fire Lancer",
             UnitKind::EmberSmokeWitch => "Smoke Witch",
             UnitKind::EmberCinderEngine => "Cinder Engine",
+            UnitKind::VanguardArbalester => "Arbalester",
+            UnitKind::VanguardArcanist => "Arcanist",
+            UnitKind::GroveBrambleguard => "Brambleguard",
+            UnitKind::GroveSpitefang => "Spitefang",
+            UnitKind::EmberMagmaBrute => "Magma Brute",
+            UnitKind::EmberAshStalker => "Ash Stalker",
         }
     }
 }
@@ -727,6 +764,12 @@ pub struct BuildingConfig {
     pub spawned_unit: Option<UnitKind>,
     pub income_bonus: i32,
     pub color: [f32; 3],
+    /// Branch specializations this building may be upgraded into.
+    #[serde(default)]
+    pub upgrades: Vec<BuildingKind>,
+    /// Set when this config is itself an upgrade of a base building.
+    #[serde(default)]
+    pub upgraded_from: Option<BuildingKind>,
 }
 
 /// Data-driven unit abilities (plan.md Phase 2 item 2). All parameters are
@@ -1305,6 +1348,63 @@ impl GameSim {
 
     pub fn reset_to_lobby(&mut self) {
         self.reset_to_lobby_inner();
+    }
+
+    /// Branch upgrade (plan.md Phase 2 item 3): replace a base building with
+    /// one of its listed specializations in place. Costs the price delta
+    /// between the target and the base config; heals the building to full
+    /// and resets its spawn timer. Upgraded buildings sell at 70% of their
+    /// (higher) value.
+    pub fn upgrade_building(
+        &mut self,
+        player_id: PlayerId,
+        building_id: u64,
+        to: BuildingKind,
+    ) -> Result<(), String> {
+        if self.phase != MatchPhase::Playing {
+            return Err("Buildings can only be upgraded during a match.".to_string());
+        }
+        let index = self
+            .buildings
+            .iter()
+            .position(|building| building.id == building_id)
+            .ok_or_else(|| "That building no longer exists.".to_string())?;
+        if self.buildings[index].owner != player_id {
+            return Err("You can only upgrade your own buildings.".to_string());
+        }
+        let base_kind = self.buildings[index].kind;
+        let base_name = self.balance.building(base_kind).name.clone();
+        let base_cost = self.balance.building(base_kind).cost;
+        if !self
+            .balance
+            .building(base_kind)
+            .upgrades
+            .contains(&to)
+        {
+            return Err(format!(
+                "{} cannot be upgraded into {}.",
+                base_name,
+                self.balance.building(to).name
+            ));
+        }
+        let target = self.balance.building(to);
+        let cost = (target.cost - base_cost).max(0);
+        let owner_index = self.player_index(player_id).unwrap_or(0);
+        if self.economies[owner_index].gold < cost {
+            return Err(format!("Not enough gold for {}.", target.name));
+        }
+        self.economies[owner_index].gold -= cost;
+        let building = &mut self.buildings[index];
+        building.kind = to;
+        building.max_health = target.max_health;
+        building.health = target.max_health;
+        building.spawn_timer = target.spawn_interval.unwrap_or(0.0);
+        self.message = format!(
+            "{team:?} upgraded {base_name} into {}.",
+            target.name,
+            team = self.side_of(player_id)
+        );
+        Ok(())
     }
 
     /// Sell one of the player's buildings for a 70% refund (plan.md Phase 1
@@ -3054,6 +3154,59 @@ mod tests {
         assert!(sim.players.iter().all(|player| player.connected));
         assert_eq!(sim.phase, MatchPhase::Playing);
         assert!(!sim.waiting_for_reconnect());
+    }
+
+    #[test]
+    fn branch_upgrade_changes_production_and_charges_delta() {
+        let mut sim = ready_two_players();
+        let player = sim.players[0].id;
+        place_test_building(&mut sim, player, BuildingKind::VanguardRangeTower, GridCell { x: 0, y: 0 })
+            .unwrap();
+        let building_id = sim.buildings[0].id;
+        sim.economies[0].gold += 500;
+        let gold_before = sim.economies[0].gold;
+        let base_cost = sim.balance.building(BuildingKind::VanguardRangeTower).cost;
+        let target_cost = sim.balance.building(BuildingKind::VanguardArbalestTower).cost;
+
+        sim.upgrade_building(player, building_id, BuildingKind::VanguardArbalestTower)
+            .unwrap();
+
+        assert_eq!(sim.buildings[0].kind, BuildingKind::VanguardArbalestTower);
+        assert_eq!(
+            sim.economies[0].gold,
+            gold_before - (target_cost - base_cost)
+        );
+        assert_eq!(sim.buildings[0].health, sim.buildings[0].max_health);
+        assert_eq!(
+            sim.balance
+                .building(sim.buildings[0].kind)
+                .spawned_unit,
+            Some(UnitKind::VanguardArbalester)
+        );
+
+        // Wrong branch rejected.
+        assert!(sim
+            .upgrade_building(player, building_id, BuildingKind::GroveSpitefen)
+            .is_err());
+    }
+
+    #[test]
+    fn upgraded_buildings_sell_at_upgraded_value() {
+        let mut sim = ready_two_players();
+        let player = sim.players[0].id;
+        place_test_building(&mut sim, player, BuildingKind::VanguardRangeTower, GridCell { x: 0, y: 0 })
+            .unwrap();
+        let building_id = sim.buildings[0].id;
+        sim.economies[0].gold += 500;
+        sim.upgrade_building(player, building_id, BuildingKind::VanguardArcaneSpire)
+            .unwrap();
+        let gold_before = sim.economies[0].gold;
+        let expected = (sim.balance.building(BuildingKind::VanguardArcaneSpire).cost as f32 * 0.7)
+            .floor() as i32;
+
+        sim.sell_building(player, building_id).unwrap();
+
+        assert_eq!(sim.economies[0].gold, gold_before + expected);
     }
 
     #[test]

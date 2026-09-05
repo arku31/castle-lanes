@@ -799,10 +799,28 @@ pub(crate) fn selected_object_details(
             } else {
                 String::new()
             };
+            let upgrade_hint = if side_matches_viewer(snapshot, building.owner, viewer_team)
+                && !config.upgrades.is_empty()
+            {
+                let options: Vec<String> = config
+                    .upgrades
+                    .iter()
+                    .enumerate()
+                    .map(|(i, branch)| {
+                        let branch_config = balance.building(*branch);
+                        let key = if i == 0 { "U" } else { "I" };
+                        let delta = branch_config.cost - config.cost;
+                        format!("\n{key}: upgrade to {} for {delta}g", branch_config.name)
+                    })
+                    .collect();
+                options.join("")
+            } else {
+                String::new()
+            };
             if let Some(unit_kind) = config.spawned_unit {
                 let unit = balance.unit(unit_kind);
                 Some(format!(
-                    "{} {:?} {:?} {:?}\nHP {}/{}   Next {} in {:.1}s\nProduces: {}  HP {}\nDamage {} {}   Armor {}\nMv {:.1}   AtkR {:.1}   AS {:.2}/s{}",
+                    "{} {:?} {:?} {:?}\nHP {}/{}   Next {} in {:.1}s\nProduces: {}  HP {}\nDamage {} {}   Armor {}\nMv {:.1}   AtkR {:.1}   AS {:.2}/s{}{}",
                     config.name,
                     building.owner,
                     building.lane,
@@ -820,17 +838,19 @@ pub(crate) fn selected_object_details(
                     unit.attack_range,
                     attacks_per_second(unit.attack_interval),
                     sell_hint,
+                    upgrade_hint,
                 ))
             } else {
                 Some(format!(
-                    "{} {:?} {:?} {:?}\nHP {}/{}   Economy building\nIncome +{} every income tick\nProduces no unit wave.",
+                    "{} {:?} {:?} {:?}\nHP {}/{}   Economy building\nIncome +{} every income tick\nProduces no unit wave.{}",
                     config.name,
                     building.owner,
                     building.lane,
                     building.zone,
                     building.health.max(0),
                     building.max_health,
-                    config.income_bonus
+                    config.income_bonus,
+                    upgrade_hint
                 ))
             }
         }

@@ -466,6 +466,17 @@ pub(crate) fn building_icon_handle(
         BuildingKind::EmberBlazeStable => assets.ember_blaze_stable.clone(),
         BuildingKind::EmberSmokeAltar => assets.ember_smoke_altar.clone(),
         BuildingKind::EmberInfernoEngine => assets.ember_inferno_engine.clone(),
+        // Branch upgrades reuse their base race's icons for now; a dedicated
+        // icon pass lands with the Phase 2 art batch.
+        BuildingKind::VanguardArbalestTower | BuildingKind::VanguardArcaneSpire => {
+            assets.vanguard_range_tower.clone()
+        }
+        BuildingKind::GroveBrambleWarren | BuildingKind::GroveSpitefen => {
+            assets.grove_root_den.clone()
+        }
+        BuildingKind::EmberMagmaForge | BuildingKind::EmberAshPack => {
+            assets.ember_cinder_pit.clone()
+        }
     }
 }
 
@@ -500,6 +511,13 @@ pub(crate) fn unit_sprite_handle(assets: &UnitSpriteAssets, kind: UnitKind) -> H
         UnitKind::EmberFireLancer => assets.ember_fire_lancer.clone(),
         UnitKind::EmberSmokeWitch => assets.ember_smoke_witch.clone(),
         UnitKind::EmberCinderEngine => assets.ember_cinder_engine.clone(),
+        // Upgrade units reuse existing sprites (documented in assets.md).
+        UnitKind::VanguardArbalester => assets.vanguard_archer.clone(),
+        UnitKind::VanguardArcanist => assets.vanguard_battle_cleric.clone(),
+        UnitKind::GroveBrambleguard => assets.grove_barkguard.clone(),
+        UnitKind::GroveSpitefang => assets.grove_vine_stalker.clone(),
+        UnitKind::EmberMagmaBrute => assets.ember_obsidian_guard.clone(),
+        UnitKind::EmberAshStalker => assets.ember_runner.clone(),
     }
 }
 
@@ -526,6 +544,13 @@ pub(crate) fn unit_sprite_size(kind: UnitKind) -> Vec2 {
         UnitKind::EmberFireLancer => Vec2::splat(67.0),
         UnitKind::EmberSmokeWitch => Vec2::splat(64.0),
         UnitKind::EmberCinderEngine => Vec2::splat(76.0),
+        // Upgrade units reuse base-sprite dimensions.
+        UnitKind::VanguardArbalester => Vec2::splat(62.0),
+        UnitKind::VanguardArcanist => Vec2::splat(64.0),
+        UnitKind::GroveBrambleguard => Vec2::splat(70.0),
+        UnitKind::GroveSpitefang => Vec2::splat(66.0),
+        UnitKind::EmberMagmaBrute => Vec2::splat(70.0),
+        UnitKind::EmberAshStalker => Vec2::splat(61.0),
     }
 }
 
@@ -872,6 +897,17 @@ pub(crate) fn spawn_building(
             ))
             .id(),
     );
+    // Branch-upgraded buildings show a gold star marker (plan.md item 3).
+    if config.upgraded_from.is_some() {
+        let star = spawn_diamond(
+            commands,
+            Vec2::new(pos.x + CELL * 0.5 - 6.0, pos.y - CELL * 0.5 + 6.0),
+            Vec2::splat(9.0),
+            Color::srgb(1.0, 0.85, 0.25),
+            3.6,
+        );
+        spawned.push(star);
+    }
     for entity in spawned {
         commands.entity(entity).insert(StaticScene);
     }

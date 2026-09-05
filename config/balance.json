@@ -88,6 +88,10 @@
         0.39,
         0.62,
         0.82
+      ],
+      "upgrades": [
+        "VanguardArbalestTower",
+        "VanguardArcaneSpire"
       ]
     },
     {
@@ -200,6 +204,10 @@
         0.33,
         0.66,
         0.36
+      ],
+      "upgrades": [
+        "GroveBrambleWarren",
+        "GroveSpitefen"
       ]
     },
     {
@@ -328,6 +336,10 @@
         0.86,
         0.34,
         0.22
+      ],
+      "upgrades": [
+        "EmberMagmaForge",
+        "EmberAshPack"
       ]
     },
     {
@@ -441,6 +453,108 @@
         0.23,
         0.12
       ]
+    },
+    {
+      "kind": "VanguardArbalestTower",
+      "name": "Arbalest Tower",
+      "label": "A",
+      "cost": 190,
+      "max_health": 280,
+      "armor_type": "Fortified",
+      "spawn_interval": 36.0,
+      "spawned_unit": "VanguardArbalester",
+      "income_bonus": 0,
+      "color": [
+        0.45,
+        0.68,
+        0.88
+      ],
+      "upgraded_from": "VanguardRangeTower"
+    },
+    {
+      "kind": "VanguardArcaneSpire",
+      "name": "Arcane Spire",
+      "label": "S",
+      "cost": 200,
+      "max_health": 260,
+      "armor_type": "Fortified",
+      "spawn_interval": 38.0,
+      "spawned_unit": "VanguardArcanist",
+      "income_bonus": 0,
+      "color": [
+        0.62,
+        0.5,
+        0.9
+      ],
+      "upgraded_from": "VanguardRangeTower"
+    },
+    {
+      "kind": "GroveBrambleWarren",
+      "name": "Bramble Warren",
+      "label": "W",
+      "cost": 180,
+      "max_health": 420,
+      "armor_type": "Fortified",
+      "spawn_interval": 30.0,
+      "spawned_unit": "GroveBrambleguard",
+      "income_bonus": 0,
+      "color": [
+        0.28,
+        0.6,
+        0.3
+      ],
+      "upgraded_from": "GroveRootDen"
+    },
+    {
+      "kind": "GroveSpitefen",
+      "name": "Spitefen",
+      "label": "F",
+      "cost": 170,
+      "max_health": 340,
+      "armor_type": "Fortified",
+      "spawn_interval": 26.0,
+      "spawned_unit": "GroveSpitefang",
+      "income_bonus": 0,
+      "color": [
+        0.55,
+        0.75,
+        0.3
+      ],
+      "upgraded_from": "GroveRootDen"
+    },
+    {
+      "kind": "EmberMagmaForge",
+      "name": "Magma Forge",
+      "label": "M",
+      "cost": 175,
+      "max_health": 260,
+      "armor_type": "Fortified",
+      "spawn_interval": 30.0,
+      "spawned_unit": "EmberMagmaBrute",
+      "income_bonus": 0,
+      "color": [
+        0.95,
+        0.4,
+        0.15
+      ],
+      "upgraded_from": "EmberCinderPit"
+    },
+    {
+      "kind": "EmberAshPack",
+      "name": "Ash Pack",
+      "label": "P",
+      "cost": 160,
+      "max_health": 230,
+      "armor_type": "Fortified",
+      "spawn_interval": 24.0,
+      "spawned_unit": "EmberAshStalker",
+      "income_bonus": 0,
+      "color": [
+        0.7,
+        0.55,
+        0.45
+      ],
+      "upgraded_from": "EmberCinderPit"
     }
   ],
   "units": [
@@ -799,6 +913,117 @@
         "targets": 2,
         "fraction": 0.5,
         "radius": 3.0
+      }
+    },
+    {
+      "kind": "VanguardArbalester",
+      "name": "Arbalester",
+      "label": "A",
+      "max_health": 90,
+      "damage": 30,
+      "damage_variance": 0.1,
+      "bounty": 3,
+      "attack_type": "Pierce",
+      "attack_mode": "Ranged",
+      "armor_type": "Light",
+      "attack_range": 15.0,
+      "speed": 3.0,
+      "attack_interval": 2.6
+    },
+    {
+      "kind": "VanguardArcanist",
+      "name": "Arcanist",
+      "label": "M",
+      "max_health": 70,
+      "damage": 26,
+      "damage_variance": 0.1,
+      "bounty": 3,
+      "attack_type": "Magic",
+      "attack_mode": "Ranged",
+      "armor_type": "Unarmored",
+      "attack_range": 10.0,
+      "speed": 3.4,
+      "attack_interval": 1.9
+    },
+    {
+      "kind": "GroveBrambleguard",
+      "name": "Brambleguard",
+      "label": "B",
+      "max_health": 320,
+      "damage": 15,
+      "damage_variance": 0.1,
+      "bounty": 4,
+      "attack_type": "Normal",
+      "attack_mode": "Melee",
+      "armor_type": "Heavy",
+      "attack_range": 2.0,
+      "speed": 2.2,
+      "attack_interval": 1.6,
+      "ability": {
+        "type": "regeneration",
+        "health_per_second": 5
+      }
+    },
+    {
+      "kind": "GroveSpitefang",
+      "name": "Spitefang",
+      "label": "S",
+      "max_health": 110,
+      "damage": 20,
+      "damage_variance": 0.1,
+      "bounty": 3,
+      "attack_type": "Normal",
+      "attack_mode": "Melee",
+      "armor_type": "Normal",
+      "attack_range": 2.4,
+      "speed": 5.2,
+      "attack_interval": 1.2,
+      "ability": {
+        "type": "berserk",
+        "below_health_fraction": 0.4,
+        "speed_multiplier": 1.6,
+        "attack_speed_multiplier": 1.4
+      }
+    },
+    {
+      "kind": "EmberMagmaBrute",
+      "name": "Magma Brute",
+      "label": "B",
+      "max_health": 150,
+      "damage": 22,
+      "damage_variance": 0.1,
+      "bounty": 4,
+      "attack_type": "Normal",
+      "attack_mode": "Melee",
+      "armor_type": "Heavy",
+      "attack_range": 2.4,
+      "speed": 3.2,
+      "attack_interval": 1.5,
+      "ability": {
+        "type": "splash",
+        "targets": 2,
+        "fraction": 0.45,
+        "radius": 2.5
+      }
+    },
+    {
+      "kind": "EmberAshStalker",
+      "name": "Ash Stalker",
+      "label": "A",
+      "max_health": 90,
+      "damage": 18,
+      "damage_variance": 0.1,
+      "bounty": 3,
+      "attack_type": "Pierce",
+      "attack_mode": "Melee",
+      "armor_type": "Light",
+      "attack_range": 2.2,
+      "speed": 6.2,
+      "attack_interval": 2.2,
+      "ability": {
+        "type": "slow",
+        "factor": 0.7,
+        "duration": 1.5
       }
     }
   ],

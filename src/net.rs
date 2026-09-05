@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 pub const DEFAULT_SERVER_ADDR: &str = "127.0.0.1:4000";
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 9;
 pub type GameId = u32;
 
 /// Wire format tag. Bincode is the default (5-10x smaller than JSON);
@@ -103,6 +103,13 @@ pub enum ClientPacket {
     SellBuilding {
         player_id: PlayerId,
         building_id: u64,
+        #[serde(default)]
+        seq: Option<u32>,
+    },
+    UpgradeBuilding {
+        player_id: PlayerId,
+        building_id: u64,
+        to: BuildingKind,
         #[serde(default)]
         seq: Option<u32>,
     },

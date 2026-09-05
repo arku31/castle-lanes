@@ -49,6 +49,7 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `R`: vote for rematch after game over.
 - `Ctrl+Q`: concede the match (your castle falls; the opponent wins).
 - `Delete`: sell the selected own building for a 70% refund.
+- `U` / `I`: upgrade the selected own building into one of its two branches (e.g. Range Tower to Arbalest Tower or Arcane Spire). Upgrades change the produced unit, heal the building, and make it sell for 70% of the upgraded value.
 - `H`: open or close the in-game help/rules overlay.
 - `V`: mute or unmute all sound (persisted to `config/client_settings.json`).
 - `O`: open the settings panel — `,`/`.` adjust volume, `M` mute, `F` fullscreen, `N` cycle resolution preset. Everything persists to `config/client_settings.json`.

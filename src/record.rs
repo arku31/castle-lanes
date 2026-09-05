@@ -51,6 +51,7 @@ pub enum RecordedIntent {
     SellBuilding {
         building_id: u64,
     },
+    UpgradeBuilding { to: BuildingKind },
     Surrender,
     VoteRematch,
 }

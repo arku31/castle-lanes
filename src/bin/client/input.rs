@@ -86,6 +86,58 @@ pub(crate) fn menu_and_lobby_input(
     if keys.just_pressed(KeyCode::Backspace) {
         sell_selected_building(&mut net, &state, &world_selection);
     }
+    if keys.just_pressed(KeyCode::KeyU) {
+        upgrade_selected_building(&mut net, &state, &world_selection, 0);
+    }
+    if keys.just_pressed(KeyCode::KeyI) {
+        upgrade_selected_building(&mut net, &state, &world_selection, 1);
+    }
+}
+
+/// Upgrade the selected own building into one of its listed branches
+/// (branch index 0 = key U, 1 = key I; plan.md Phase 2 item 3).
+fn upgrade_selected_building(
+    net: &mut ClientNet,
+    state: &SnapshotState,
+    world_selection: &WorldSelection,
+    branch: usize,
+) {
+    let (Some(snapshot), Some(player_id)) = (&state.snapshot, net.player_id) else {
+        return;
+    };
+    let Some(SelectedObject::Building(building_id)) = world_selection.selected else {
+        return;
+    };
+    let Some(building) = snapshot.buildings.iter().find(|b| b.id == building_id) else {
+        return;
+    };
+    let Some(player) = snapshot.players.iter().find(|p| p.id == player_id) else {
+        return;
+    };
+    if side_of_player(snapshot, building.owner) != player.team {
+        return;
+    }
+    let Some(target) = state
+        .balance
+        .building(building.kind)
+        .upgrades
+        .get(branch)
+        .copied()
+    else {
+        return;
+    };
+    let seq = net.next_seq;
+    net.next_seq = net.next_seq.wrapping_add(1);
+    net.pending_placement = None;
+    send_client(
+        net,
+        &ClientPacket::UpgradeBuilding {
+            player_id,
+            building_id,
+            to: target,
+            seq: Some(seq),
+        },
+    );
 }
 
 /// Sell the selected own building for a 70% refund (Delete/Backspace).
