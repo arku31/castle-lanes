@@ -1531,6 +1531,27 @@ pub(crate) fn truncate_text(value: &str, max_chars: usize) -> String {
     out
 }
 
+/// Replay progress bar (plan.md Phase 3 replay playback UI).
+fn spawn_replay_progress_bar(commands: &mut Commands, fraction: f32) {
+    let bar_y = TOP_BAR_Y - 8.0;
+    spawn_ui_rect(
+        commands,
+        Vec2::new(0.0, bar_y),
+        Vec2::new(600.0, 6.0),
+        Color::srgba(0.1, 0.09, 0.07, 0.9),
+        48.0,
+    );
+    if fraction > 0.0 {
+        spawn_ui_rect(
+            commands,
+            Vec2::new(-300.0 + 600.0 * fraction * 0.5, bar_y),
+            Vec2::new(600.0 * fraction, 6.0),
+            TEXT_GOLD,
+            49.0,
+        );
+    }
+}
+
 /// Header label in the fantasy display face (OFL font, plan.md item 5/7).
 pub(crate) fn spawn_ui_title(
     commands: &mut Commands,

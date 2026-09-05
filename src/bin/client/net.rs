@@ -12,6 +12,9 @@ pub(crate) fn receive_packets(
     mut state: ResMut<SnapshotState>,
     mut interp: ResMut<RenderInterp>,
 ) {
+    if net.is_replay {
+        return;
+    }
     let mut buf = [0_u8; 65_535];
     loop {
         match net.socket.recv_from(&mut buf) {

@@ -101,6 +101,7 @@ struct ClientNet {
     status: String,
     next_seq: u32,
     pending_placement: Option<PendingPlacement>,
+    is_replay: bool,
 }
 
 /// An unacknowledged placement intent, retried until acked or expired
@@ -175,6 +176,7 @@ struct ReplayControls {
 }
 
 fn run_replay(path: std::path::PathBuf) {
+    // Replay mode: no server, no networking, the local sim drives everything.
     let record = match castle_lanes::record::load_record(&path) {
         Ok(record) => record,
         Err(err) => {
@@ -222,6 +224,28 @@ fn run_replay(path: std::path::PathBuf) {
     };
 
     let socket = UdpSocket::bind("0.0.0.0:0").expect("bind replay socket");
+    let client_net = ClientNet {
+        socket,
+        server_addr: "127.0.0.1:0".parse().unwrap(),
+        connected: false,
+        game_id: None,
+        player_id: None,
+        team: None,
+        player_name: String::new(),
+        auto_ready: false,
+        auto_build_demo: false,
+        auto_race: RaceKind::Vanguard,
+        sent_auto_game: false,
+        sent_auto_race: false,
+        sent_auto_ready: false,
+        sent_auto_build: false,
+        last_join: Instant::now(),
+        last_keepalive: Instant::now(),
+        status: String::new(),
+        next_seq: 0,
+        pending_placement: None,
+        is_replay: true,
+    };
     // replay client: same window/UI/render stack, driven by the local sim
     App::new()
         .add_plugins(
@@ -262,6 +286,7 @@ fn run_replay(path: std::path::PathBuf) {
         .init_resource::<SfxQueue>()
         .init_resource::<UiOverlays>()
         .init_resource::<MatchHints>()
+        .insert_resource(client_net)
         .insert_resource(player)
         .add_systems(Startup, setup)
         .add_systems(
@@ -696,6 +721,7 @@ fn main() {
             status: "Press Enter to connect to the lobby server.".to_string(),
             next_seq: 1,
             pending_placement: None,
+            is_replay: false,
         })
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
