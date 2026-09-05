@@ -34,6 +34,8 @@ const REVEAL_UNIT_RADIUS: f32 = 185.0;
 const FOG_COLUMNS: usize = 96;
 const FOG_ROWS: usize = 34;
 const FOG_SOFT_EDGE: f32 = 82.0;
+const TEAM_COLOR_LEFT: Color = Color::srgb(0.30, 0.58, 0.98);
+const TEAM_COLOR_RIGHT: Color = Color::srgb(0.98, 0.36, 0.28);
 const PANEL_BG: Color = Color::srgba(0.045, 0.040, 0.035, 0.92);
 const PANEL_EDGE: Color = Color::srgba(0.58, 0.43, 0.22, 0.95);
 const TEXT_GOLD: Color = Color::srgb(0.95, 0.78, 0.42);
@@ -1207,7 +1209,7 @@ fn detect_combat_vfx(
             for event in &snapshot.bounty_events {
                 if event.team == team && !tracker.seen_bounty_events.contains(&event.id) {
                     let pos = sim_pos_to_world(event.pos) + Vec2::new(0.0, 34.0);
-                    spawn_bounty_text(&mut commands, pos, event.amount);
+                    spawn_bounty_text(&mut commands, pos, event.amount, event.team);
                     tracker.seen_bounty_events.insert(event.id);
                 }
             }
@@ -2993,12 +2995,17 @@ fn minimap_world_to_ui(pos: Vec2) -> Vec2 {
     )
 }
 
-fn team_minimap_color(team: Team, viewer_team: Option<Team>) -> Color {
-    if Some(team) == viewer_team {
-        Color::srgb(0.24, 0.95, 0.38)
-    } else {
-        Color::srgb(0.96, 0.22, 0.18)
+fn team_color(team: Team) -> Color {
+    match team {
+        Team::Left => TEAM_COLOR_LEFT,
+        Team::Right => TEAM_COLOR_RIGHT,
     }
+}
+
+fn team_minimap_color(team: Team, _viewer_team: Option<Team>) -> Color {
+    // One color per side everywhere (units, bars, minimap, bounty text) so
+    // team identity reads at a glance even for spectators.
+    team_color(team)
 }
 
 fn attacks_per_second(attack_interval: f32) -> f32 {
@@ -3153,8 +3160,9 @@ fn spawn_damage_text(
     ));
 }
 
-fn spawn_bounty_text(commands: &mut Commands, pos: Vec2, amount: i32) {
+fn spawn_bounty_text(commands: &mut Commands, pos: Vec2, amount: i32, team: Team) {
     let text = format!("+{amount}g");
+    let accent = team_color(team);
     spawn_floating_text(
         commands,
         &text,
@@ -3169,7 +3177,7 @@ fn spawn_bounty_text(commands: &mut Commands, pos: Vec2, amount: i32) {
         commands,
         &text,
         pos + Vec2::new(2.0, 6.0),
-        Color::srgb(1.0, 0.86, 0.24),
+        accent,
         29.0,
         VFX_Z + 9.0,
         Vec2::new(-7.0, 72.0),
@@ -3182,7 +3190,7 @@ fn spawn_bounty_text(commands: &mut Commands, pos: Vec2, amount: i32) {
         Vec2::new(4.0, 15.0),
     ] {
         commands.spawn((
-            Sprite::from_color(Color::srgb(1.0, 0.73, 0.16), Vec2::splat(7.0)),
+            Sprite::from_color(accent, Vec2::splat(7.0)),
             Transform::from_xyz(pos.x + offset.x, pos.y + offset.y, VFX_Z + 7.0)
                 .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)),
             CombatVfx {
@@ -3841,6 +3849,13 @@ fn spawn_building(
         color.with_alpha(0.50),
         3.0,
     ));
+    spawned.push(spawn_rect(
+        commands,
+        Vec2::new(pos.x, pos.y - 8.0 - (CELL - 8.0) * 0.5 + 2.5),
+        Vec2::new(CELL - 8.0, 3.5),
+        team_color(building.owner).with_alpha(0.9),
+        2.9,
+    ));
     let mut sprite = Sprite::from_image(building_icon_handle(building_icons, building.kind));
     sprite.custom_size = Some(Vec2::splat(48.0));
     spawned.push(
@@ -3926,8 +3941,15 @@ fn spawn_castle(
         commands,
         Vec2::new(pos.x - 104.0 * (1.0 - health_pct) * 0.5, pos.y + 94.0),
         Vec2::new(104.0 * health_pct, 11.0),
-        Color::srgb(0.15, 0.78, 0.34),
+        team_color(castle.team),
         10.0,
+    ));
+    spawned.push(spawn_rect(
+        commands,
+        Vec2::new(pos.x, pos.y - 12.0),
+        Vec2::new(108.0, 5.0),
+        team_color(castle.team).with_alpha(0.85),
+        5.3,
     ));
     for entity in spawned {
         commands.entity(entity).insert(StaticScene);
@@ -3958,7 +3980,18 @@ fn spawn_unit_visual(
     let mut sprite = Sprite::from_image(unit_sprite_handle(unit_assets, unit.kind));
     sprite.custom_size = Some(sprite_size);
     sprite.flip_x = unit.owner == Team::Right;
+    sprite.color = match unit.owner {
+        Team::Left => Color::srgb(0.86, 0.92, 1.0),
+        Team::Right => Color::srgb(1.0, 0.90, 0.88),
+    };
     let sprite_entity = commands.spawn((sprite, Transform::from_xyz(0.0, 12.0, 0.0))).id();
+    let team_stripe = spawn_rect(
+        commands,
+        Vec2::new(0.0, -20.0),
+        Vec2::new(sprite_size.x * 0.55, 4.5),
+        team_color(unit.owner).with_alpha(0.85),
+        -0.45,
+    );
     let badge_attack = spawn_rect(
         commands,
         Vec2::new(-9.0, 27.0),
@@ -3986,12 +4019,19 @@ fn spawn_unit_visual(
         commands,
         Vec2::new(-(UNIT_HEALTH_BAR_W * (1.0 - health_pct)) / 2.0, -24.0),
         Vec2::new(UNIT_HEALTH_BAR_W * health_pct, 4.0),
-        Color::srgb(0.18, 0.88, 0.40),
+        team_color(unit.owner),
         1.6,
     );
     commands
         .entity(root)
-        .add_children(&[shadow, sprite_entity, badge_attack, badge_armor, health_fill]);
+        .add_children(&[
+            shadow,
+            team_stripe,
+            sprite_entity,
+            badge_attack,
+            badge_armor,
+            health_fill,
+        ]);
     UnitVisual {
         root,
         sprite: sprite_entity,
