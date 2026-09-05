@@ -426,16 +426,31 @@ fn main() {
     let socket = UdpSocket::bind("0.0.0.0:0").expect("bind client udp socket");
     socket.set_nonblocking(true).expect("set nonblocking");
 
+    // Bevy 0.18 resolves the asset folder relative to the executable, which
+    // breaks `target/debug` layouts: prefer the repo-relative assets/ dir.
+    // Bevy 0.18 resolves RELATIVE asset paths against the executable dir
+    // (target/debug), so the override must be absolute.
+    let asset_file_path = std::env::current_dir()
+        .map(|cwd| cwd.join("assets").to_string_lossy().to_string())
+        .unwrap_or_else(|_| "assets".to_string());
+
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
                 title: format!("Castle Lanes v{}", castle_lanes::VERSION),
                 resolution: WindowResolution::new(1100, 720),
                 resizable: true,
                 ..default()
             }),
             ..default()
-        }))
+                })
+                .set(AssetPlugin {
+                    file_path: asset_file_path,
+                    ..default()
+                }),
+        )
         .insert_resource(ClearColor(Color::srgb(0.07, 0.08, 0.09)))
         .insert_resource(ClientNet {
             socket,
@@ -646,7 +661,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_grass_background(&mut commands);
     spawn_static_board(&mut commands, None);
     let fonts = FontAssets {
-        display: asset_server.load("fonts/medievalsharp.ttf"),
+        display: asset_server.load("fonts/MedievalSharp.ttf"),
     };
     commands.insert_resource(fonts);
 
