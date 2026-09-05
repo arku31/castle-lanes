@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 pub const DEFAULT_SERVER_ADDR: &str = "127.0.0.1:4000";
-pub const PROTOCOL_VERSION: u16 = 7;
+pub const PROTOCOL_VERSION: u16 = 8;
 pub type GameId = u32;
 
 /// Wire format tag. Bincode is the default (5-10x smaller than JSON);
@@ -167,8 +167,10 @@ pub struct SnapshotDelta {
     pub elapsed_secs: f32,
     pub sudden_death: bool,
     pub players: Vec<PlayerInfo>,
-    pub economies: [Economy; 2],
-    pub castles: [Castle; 2],
+    #[serde(default)]
+    pub economies: Vec<Economy>,
+    #[serde(default)]
+    pub castles: Vec<Castle>,
     pub bounty_events: Vec<crate::sim::BountyEvent>,
     pub winner: Option<Team>,
     pub message: String,
@@ -290,9 +292,19 @@ pub fn filter_snapshot_for_viewer(
         return filtered;
     }
 
+    let sides: HashMap<u64, Team> = snapshot
+        .players
+        .iter()
+        .map(|player| (player.id.0 as u64, player.team))
+        .collect();
+    let side_of = |owner: crate::sim::PlayerId| -> Team {
+        sides.get(&(owner.0 as u64)).copied().unwrap_or(Team::Left)
+    };
+
     filtered.units.retain(|unit| {
-        unit.owner == viewer
+        side_of(unit.owner) == viewer
             || crate::sim::position_revealed_to(
+                &snapshot.players,
                 &snapshot.buildings,
                 &snapshot.units,
                 viewer,
@@ -302,18 +314,23 @@ pub fn filter_snapshot_for_viewer(
 
     let mut kept_buildings: Vec<crate::sim::Building> = Vec::new();
     for building in &snapshot.buildings {
-        if building.owner == viewer {
+        if side_of(building.owner) == viewer {
             kept_buildings.push(building.clone());
             continue;
         }
         let position = crate::sim::building_position(
-            building.owner,
+            side_of(building.owner),
             building.lane,
             building.zone,
             building.cell,
         );
-        if crate::sim::position_revealed_to(&snapshot.buildings, &snapshot.units, viewer, position)
-        {
+        if crate::sim::position_revealed_to(
+            &snapshot.players,
+            &snapshot.buildings,
+            &snapshot.units,
+            viewer,
+            position,
+        ) {
             seen_enemy_buildings.insert(building.id, building.clone());
             kept_buildings.push(building.clone());
         } else if let Some(stale) = seen_enemy_buildings.get(&building.id) {
@@ -531,7 +548,7 @@ mod tests {
         let mut sim = ready_two_players();
         sim.units.push(crate::sim::Unit {
             id: 900,
-            owner: Team::Left,
+            owner: crate::sim::PlayerId(1),
             kind: UnitKind::VanguardGuard,
             lane: Lane::Top,
             health: 100,
@@ -548,7 +565,7 @@ mod tests {
         sim.units[0].pos = crate::sim::lane_position(Lane::Top, 22.0);
         sim.units.push(crate::sim::Unit {
             id: 901,
-            owner: Team::Right,
+            owner: crate::sim::PlayerId(2),
             kind: UnitKind::EmberRunner,
             lane: Lane::Top,
             health: 80,
@@ -655,7 +672,7 @@ mod tests {
         .unwrap();
         sim.units.push(crate::sim::Unit {
             id: 900,
-            owner: Team::Left,
+            owner: crate::sim::PlayerId(1),
             kind: UnitKind::VanguardGuard,
             lane: Lane::Top,
             health: 100,
@@ -667,7 +684,7 @@ mod tests {
         });
         sim.units.push(crate::sim::Unit {
             id: 901,
-            owner: Team::Right,
+            owner: crate::sim::PlayerId(2),
             kind: UnitKind::VanguardGuard,
             lane: Lane::Top,
             health: 100,
@@ -713,7 +730,7 @@ mod tests {
 
         // Destroyed buildings are pruned from the seen set.
         sim.buildings
-            .retain(|building| building.owner == Team::Left);
+            .retain(|building| building.owner == crate::sim::PlayerId(1));
         let destroyed = sim.snapshot();
         let destroyed = filter_snapshot_for_viewer(&destroyed, Some(Team::Left), &mut seen);
         assert_eq!(destroyed.buildings.len(), 1);

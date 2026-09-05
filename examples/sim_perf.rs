@@ -2,7 +2,7 @@ use castle_lanes::net::{
     PacketFormat, ServerPacket, diff_snapshot, encode, entityless_snapshot, set_outgoing_format,
 };
 use castle_lanes::sim::{
-    GameSim, Lane, MatchPhase, RaceKind, Team, Unit, UnitKind, WorldPos, lane_center_y,
+    GameSim, Lane, MatchPhase, PlayerId, RaceKind, Team, Unit, UnitKind, WorldPos, lane_center_y,
 };
 use std::time::{Duration, Instant};
 
@@ -97,9 +97,13 @@ fn seed_team_units(sim: &mut GameSim, owner: Team, count: usize, first_id: u64) 
         } else {
             lane_idx as f32 / (per_lane - 1) as f32
         };
+        let owner = match owner {
+            Team::Left => PlayerId(1),
+            Team::Right => PlayerId(2),
+        };
         let lane_pos = match owner {
-            Team::Left => 5.0 + lane_fraction * 42.0,
-            Team::Right => 95.0 - lane_fraction * 42.0,
+            PlayerId(1) => 5.0 + lane_fraction * 42.0,
+            _ => 95.0 - lane_fraction * 42.0,
         };
         let row = (lane_idx % 9) as f32 - 4.0;
         let y = lane_center_y(lane) + row * 0.18;

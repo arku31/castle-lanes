@@ -249,7 +249,7 @@ struct CombatTracker {
     initialized: bool,
     units: HashMap<u64, TrackedUnit>,
     buildings: HashMap<u64, TrackedBuilding>,
-    castle_health: [i32; 2],
+    castle_health: Vec<i32>,
     seen_bounty_events: HashSet<u64>,
 }
 
@@ -347,6 +347,38 @@ struct CombatVfx {
     lifetime: f32,
     max_lifetime: f32,
     velocity: Vec2,
+}
+
+/// Resolve an entity's owning player to its side; presentation logic is
+/// side-based while entities carry PlayerId owners (plan.md Phase 1 item 3).
+/// Position of a player in the snapshot's per-player vectors.
+fn player_index_of(snapshot: &MatchSnapshot, player_id: PlayerId) -> usize {
+    snapshot
+        .players
+        .iter()
+        .position(|player| player.id == player_id)
+        .unwrap_or(0)
+}
+
+fn side_of_player(snapshot: &MatchSnapshot, owner: PlayerId) -> Team {
+    snapshot
+        .players
+        .iter()
+        .find(|player| player.id == owner)
+        .map(|player| player.team)
+        .unwrap_or(Team::Left)
+}
+
+/// True when the owner's side matches the viewer (no viewer = everything).
+fn side_matches_viewer(
+    snapshot: &MatchSnapshot,
+    owner: PlayerId,
+    viewer_team: Option<Team>,
+) -> bool {
+    match viewer_team {
+        None => true,
+        Some(team) => side_of_player(snapshot, owner) == team,
+    }
 }
 
 fn main() {

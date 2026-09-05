@@ -216,7 +216,7 @@ pub(crate) fn local_gold(state: &SnapshotState, net: &ClientNet) -> Option<i32> 
     let snapshot = state.snapshot.as_ref()?;
     let player_id = net.player_id?;
     let player = current_player(snapshot, player_id)?;
-    Some(snapshot.economies[player.team.slot()].gold)
+    Some(snapshot.economies[player_index_of(snapshot, player_id)].gold)
 }
 
 pub(crate) fn active_balance(state: &SnapshotState) -> BalanceConfig {

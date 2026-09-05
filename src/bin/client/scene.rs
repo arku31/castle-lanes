@@ -111,13 +111,14 @@ pub(crate) fn sync_static_scene(
         if let Some(snapshot) = &state.snapshot {
             let balance = active_balance(&state);
             for building in &snapshot.buildings {
+                let side = side_of_player(snapshot, building.owner);
                 if !is_building_visible(snapshot, net.team, building) {
                     if is_enemy_building_scouted(snapshot, &fog, net.team, building) {
-                        spawn_building_silhouette(&mut commands, building);
+                        spawn_building_silhouette(&mut commands, building, side);
                     }
                     continue;
                 }
-                spawn_building(&mut commands, building, &balance, &building_icons);
+                spawn_building(&mut commands, building, side, &balance, &building_icons);
             }
             for castle in &snapshot.castles {
                 if !is_castle_visible(snapshot, net.team, castle.team) {
@@ -193,7 +194,8 @@ pub(crate) fn sync_units(
                 }
             }
         } else {
-            let visual = spawn_unit_visual(&mut commands, unit, &balance, &unit_assets);
+            let side = side_of_player(snapshot, unit.owner);
+            let visual = spawn_unit_visual(&mut commands, unit, side, &balance, &unit_assets);
             registry.units.insert(unit.id, visual);
             sfx.push(Sfx::UnitSpawn);
         }
@@ -324,8 +326,12 @@ pub(crate) fn update_object_highlight(
             }) {
             Some(SelectedObject::Building(id)) => {
                 if let Some(building) = snapshot.buildings.iter().find(|b| b.id == id) {
-                    static_pos =
-                        cell_to_world(building.owner, building.lane, building.zone, building.cell);
+                    static_pos = cell_to_world(
+                        side_of_player(snapshot, building.owner),
+                        building.lane,
+                        building.zone,
+                        building.cell,
+                    );
                     static_pos.y -= 2.0;
                     spec_size = Vec2::splat(CELL + 4.0);
                     spec_color = Color::srgba(0.95, 0.76, 0.24, 0.42);
@@ -540,7 +546,7 @@ pub(crate) fn is_unit_visible(
     viewer_team: Option<Team>,
     unit: &Unit,
 ) -> bool {
-    if Some(unit.owner) == viewer_team || viewer_team.is_none() {
+    if side_matches_viewer(snapshot, unit.owner, viewer_team) {
         return true;
     }
     is_world_revealed(snapshot, viewer_team, unit_world_pos(unit))
@@ -551,13 +557,18 @@ pub(crate) fn is_building_visible(
     viewer_team: Option<Team>,
     building: &Building,
 ) -> bool {
-    if Some(building.owner) == viewer_team || viewer_team.is_none() {
+    if side_matches_viewer(snapshot, building.owner, viewer_team) {
         return true;
     }
     is_world_revealed(
         snapshot,
         viewer_team,
-        cell_to_world(building.owner, building.lane, building.zone, building.cell),
+        cell_to_world(
+            side_of_player(snapshot, building.owner),
+            building.lane,
+            building.zone,
+            building.cell,
+        ),
     )
 }
 
@@ -589,11 +600,11 @@ pub(crate) fn world_reveal_strength(snapshot: &MatchSnapshot, team: Team, pos: V
     let building_strength = snapshot
         .buildings
         .iter()
-        .filter(|building| building.owner == team)
+        .filter(|building| side_of_player(snapshot, building.owner) == team)
         .map(|building| {
             reveal_strength(
                 pos.distance(cell_to_world(
-                    building.owner,
+                    side_of_player(snapshot, building.owner),
                     building.lane,
                     building.zone,
                     building.cell,
@@ -605,7 +616,7 @@ pub(crate) fn world_reveal_strength(snapshot: &MatchSnapshot, team: Team, pos: V
     let unit_strength = snapshot
         .units
         .iter()
-        .filter(|unit| unit.owner == team)
+        .filter(|unit| side_of_player(snapshot, unit.owner) == team)
         .map(|unit| reveal_strength(pos.distance(unit_world_pos(unit)), REVEAL_UNIT_RADIUS))
         .fold(0.0, f32::max);
     castle_strength.max(building_strength).max(unit_strength)
@@ -630,10 +641,15 @@ pub(crate) fn is_enemy_building_scouted(
     let Some(team) = viewer_team else {
         return false;
     };
-    if building.owner == team {
+    if side_of_player(snapshot, building.owner) == team {
         return false;
     }
-    let pos = cell_to_world(building.owner, building.lane, building.zone, building.cell);
+    let pos = cell_to_world(
+        side_of_player(snapshot, building.owner),
+        building.lane,
+        building.zone,
+        building.cell,
+    );
     !is_world_revealed(snapshot, viewer_team, pos) && fog_is_explored(fog, viewer_team, pos)
 }
 
@@ -816,10 +832,11 @@ pub(crate) fn spawn_static_board(commands: &mut Commands, team: Option<Team>) {
 pub(crate) fn spawn_building(
     commands: &mut Commands,
     building: &Building,
+    side: Team,
     balance: &BalanceConfig,
     building_icons: &BuildingIconAssets,
 ) {
-    let pos = cell_to_world(building.owner, building.lane, building.zone, building.cell);
+    let pos = cell_to_world(side, building.lane, building.zone, building.cell);
     let config = balance.building(building.kind);
     let color = Color::srgb(config.color[0], config.color[1], config.color[2]);
     let mut spawned = Vec::new();
@@ -841,7 +858,7 @@ pub(crate) fn spawn_building(
         commands,
         Vec2::new(pos.x, pos.y - 8.0 - (CELL - 8.0) * 0.5 + 2.5),
         Vec2::new(CELL - 8.0, 3.5),
-        team_color(building.owner).with_alpha(0.9),
+        team_color(side).with_alpha(0.9),
         2.9,
     ));
     let mut sprite = Sprite::from_image(building_icon_handle(building_icons, building.kind));
@@ -860,8 +877,8 @@ pub(crate) fn spawn_building(
     }
 }
 
-pub(crate) fn spawn_building_silhouette(commands: &mut Commands, building: &Building) {
-    let pos = cell_to_world(building.owner, building.lane, building.zone, building.cell);
+pub(crate) fn spawn_building_silhouette(commands: &mut Commands, building: &Building, side: Team) {
+    let pos = cell_to_world(side, building.lane, building.zone, building.cell);
     let mut spawned = Vec::new();
     spawned.push(spawn_rect(
         commands,
@@ -949,6 +966,7 @@ pub(crate) fn spawn_castle(
 pub(crate) fn spawn_unit_visual(
     commands: &mut Commands,
     unit: &Unit,
+    side: Team,
     balance: &BalanceConfig,
     unit_assets: &UnitSpriteAssets,
 ) -> UnitVisual {
@@ -970,8 +988,8 @@ pub(crate) fn spawn_unit_visual(
     );
     let mut sprite = Sprite::from_image(unit_sprite_handle(unit_assets, unit.kind));
     sprite.custom_size = Some(sprite_size);
-    sprite.flip_x = unit.owner == Team::Right;
-    sprite.color = match unit.owner {
+    sprite.flip_x = side == Team::Right;
+    sprite.color = match side {
         Team::Left => Color::srgb(0.86, 0.92, 1.0),
         Team::Right => Color::srgb(1.0, 0.90, 0.88),
     };
@@ -982,7 +1000,7 @@ pub(crate) fn spawn_unit_visual(
         commands,
         Vec2::new(0.0, -20.0),
         Vec2::new(sprite_size.x * 0.55, 4.5),
-        team_color(unit.owner).with_alpha(0.85),
+        team_color(side).with_alpha(0.85),
         -0.45,
     );
     let badge_attack = spawn_rect(
@@ -1011,7 +1029,7 @@ pub(crate) fn spawn_unit_visual(
         commands,
         Vec2::new(-(UNIT_HEALTH_BAR_W * (1.0 - health_pct)) / 2.0, -24.0),
         Vec2::new(UNIT_HEALTH_BAR_W * health_pct, 4.0),
-        team_color(unit.owner),
+        team_color(side),
         1.6,
     );
     commands.entity(root).add_children(&[

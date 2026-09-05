@@ -9,7 +9,7 @@ use crate::sim::{
     BuildZone, BuildingKind, GameSim, GridCell, Lane, MatchPhase, RaceKind, Team, UnitKind,
 };
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -200,18 +200,38 @@ impl MatchRecorder {
 }
 
 fn sample(sim: &GameSim) -> TimelineSample {
+    // Per-side aggregates stay meaningful for any even team size.
+    let sides: HashMap<u64, Team> = sim
+        .players
+        .iter()
+        .map(|player| (player.id.0 as u64, player.team))
+        .collect();
+    let slot = |team: Team| team.slot();
     let mut unit_count = [0usize; 2];
     let mut army_health = [0i32; 2];
     for unit in &sim.units {
-        let slot = unit.owner.slot();
-        unit_count[slot] += 1;
-        army_health[slot] += unit.health.max(0);
+        if let Some(team) = sides.get(&(unit.owner.0 as u64)) {
+            unit_count[slot(*team)] += 1;
+            army_health[slot(*team)] += unit.health.max(0);
+        }
+    }
+    let mut castle_health = [0i32; 2];
+    let mut gold = [0i32; 2];
+    let mut income = [0i32; 2];
+    for (index, player) in sim.players.iter().enumerate() {
+        if let Some(castle) = sim.castles.get(index) {
+            castle_health[slot(player.team)] += castle.health;
+        }
+        if let Some(economy) = sim.economies.get(index) {
+            gold[slot(player.team)] += economy.gold;
+            income[slot(player.team)] += economy.income;
+        }
     }
     TimelineSample {
         elapsed_secs: sim.elapsed_secs(),
-        castle_health: [sim.castles[0].health, sim.castles[1].health],
-        gold: [sim.economies[0].gold, sim.economies[1].gold],
-        income: [sim.economies[0].income, sim.economies[1].income],
+        castle_health,
+        gold,
+        income,
         unit_count,
         army_health,
     }

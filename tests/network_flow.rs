@@ -122,16 +122,14 @@ fn dedicated_server_runs_two_player_building_flow() {
         &mut left_snapshot,
         Duration::from_secs(3),
         "own building visible and enemy building fogged",
-        |snapshot| snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == left_player.team,
+        |snapshot| snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == left_player.id,
     );
     wait_for_snapshot(
         &right,
         &mut right_snapshot,
         Duration::from_secs(3),
         "right sees only its own building",
-        |snapshot| {
-            snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == right_player.team
-        },
+        |snapshot| snapshot.buildings.len() == 1 && snapshot.buildings[0].owner == right_player.id,
     );
     let spawn_timeout = Duration::from_secs_f32(
         BalanceConfig::default()

@@ -189,7 +189,7 @@ pub(crate) fn spawn_match_hint(
             let own = snapshot
                 .buildings
                 .iter()
-                .filter(|building| building.owner == team)
+                .filter(|building| side_of_player(snapshot, building.owner) == team)
                 .count();
             let enemy_castle_hurt = snapshot
                 .castles
@@ -303,8 +303,9 @@ pub(crate) fn spawn_top_hud(
 
     if let (Some(snapshot), Some(player_id)) = (&state.snapshot, net.player_id) {
         if let Some(player) = current_player(snapshot, player_id) {
-            let econ = &snapshot.economies[player.team.slot()];
-            let castle = &snapshot.castles[player.team.slot()];
+            let index = player_index_of(snapshot, player.id);
+            let econ = &snapshot.economies[index];
+            let castle = &snapshot.castles[index];
             spawn_resource_chip(
                 commands,
                 Vec2::new(206.0, TOP_BAR_Y + 6.0),
@@ -765,7 +766,7 @@ pub(crate) fn selected_object_details(
             Some(format!(
                 "{} {:?} {}\nHP {}/{}   {} {} dmg\nMv {:.1}   AS {:.2}/s   AtkR {:.1}\nArmor {}   Bounty {}g",
                 config.name,
-                unit.owner,
+                side_of_player(snapshot, unit.owner),
                 config.attack_mode.label(),
                 unit.health.max(0),
                 config.max_health,
@@ -787,7 +788,9 @@ pub(crate) fn selected_object_details(
                 return None;
             }
             let config = balance.building(building.kind);
-            let sell_hint = if Some(building.owner) == viewer_team {
+            let sell_hint = if side_matches_viewer(snapshot, building.owner, viewer_team)
+                && viewer_team.is_some()
+            {
                 format!(
                     "\nDelete: sell for {}g",
                     (castle_lanes::sim::SELL_REFUND_RATIO * config.cost as f32).floor() as i32
@@ -1149,7 +1152,7 @@ pub(crate) fn spawn_minimap(
         if !is_building_visible(snapshot, viewer_team, building) {
             if is_enemy_building_scouted(snapshot, fog, viewer_team, building) {
                 let pos = minimap_world_to_ui(cell_to_world(
-                    building.owner,
+                    side_of_player(snapshot, building.owner),
                     building.lane,
                     building.zone,
                     building.cell,
@@ -1164,8 +1167,9 @@ pub(crate) fn spawn_minimap(
             }
             continue;
         }
+        let side = side_of_player(snapshot, building.owner);
         let pos = minimap_world_to_ui(cell_to_world(
-            building.owner,
+            side,
             building.lane,
             building.zone,
             building.cell,
@@ -1174,7 +1178,7 @@ pub(crate) fn spawn_minimap(
             commands,
             pos,
             Vec2::splat(4.0),
-            team_minimap_color(building.owner, viewer_team),
+            team_minimap_color(side, viewer_team),
             54.0,
         );
     }
@@ -1187,7 +1191,7 @@ pub(crate) fn spawn_minimap(
             commands,
             pos,
             Vec2::splat(3.0),
-            team_minimap_color(unit.owner, viewer_team),
+            team_minimap_color(side_of_player(snapshot, unit.owner), viewer_team),
             55.0,
         );
     }
@@ -1391,8 +1395,9 @@ pub(crate) fn ui_summary(state: &SnapshotState, net: &ClientNet) -> (String, Str
 
     let economy_line = if let Some(player_id) = net.player_id {
         if let Some(player) = current_player(snapshot, player_id) {
-            let econ = &snapshot.economies[player.team.slot()];
-            let castle = &snapshot.castles[player.team.slot()];
+            let index = player_index_of(snapshot, player.id);
+            let econ = &snapshot.economies[index];
+            let castle = &snapshot.castles[index];
             format!(
                 "Gold {}   Income {}   Castle {}/{}",
                 econ.gold, econ.income, castle.health, castle.max_health

@@ -106,7 +106,7 @@ pub(crate) fn sell_selected_building(
     let Some(player) = snapshot.players.iter().find(|p| p.id == player_id) else {
         return;
     };
-    if building.owner != player.team {
+    if building.owner != player_id {
         return;
     }
     let seq = net.next_seq;
@@ -385,7 +385,7 @@ pub(crate) fn can_place_building(
     cell: GridCell,
 ) -> bool {
     let occupied = snapshot.buildings.iter().any(|building| {
-        building.owner == team
+        side_of_player(snapshot, building.owner) == team
             && building.lane == lane
             && building.zone == zone
             && building.cell == cell
@@ -397,7 +397,7 @@ pub(crate) fn can_place_building(
         .players
         .iter()
         .find(|player| player.id == player_id)
-        .map(|player| snapshot.economies[player.team.slot()].gold)
+        .map(|player| snapshot.economies[player_index_of(snapshot, player.id)].gold)
         .unwrap_or_default();
     kind.race() == team_race(snapshot, team).unwrap_or(kind.race())
         && gold >= balance.building(kind).cost
@@ -696,7 +696,12 @@ pub(crate) fn pick_world_object(
         if !is_building_visible(snapshot, viewer_team, building) {
             continue;
         }
-        let center = cell_to_world(building.owner, building.lane, building.zone, building.cell);
+        let center = cell_to_world(
+            side_of_player(snapshot, building.owner),
+            building.lane,
+            building.zone,
+            building.cell,
+        );
         if point_in_rect(world, center, Vec2::splat(CELL)) {
             return Some(SelectedObject::Building(building.id));
         }

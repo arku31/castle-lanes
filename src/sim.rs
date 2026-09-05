@@ -459,27 +459,43 @@ pub fn building_spawn_position(
 }
 
 /// True when `pos` (sim space) lies inside the viewer side's current vision:
-/// every unit, building, and the castle belonging to `viewer` emits a vision
-/// circle. Side-based, so it survives player-count changes.
+/// every unit, building, and the castle belonging to `viewer`'s side emits a
+/// vision circle. Side-based, so it survives player-count changes.
 pub fn position_revealed_to(
+    players: &[PlayerInfo],
     buildings: &[Building],
     units: &[Unit],
     viewer: Team,
     pos: WorldPos,
 ) -> bool {
+    let sides: Vec<(PlayerId, Team)> = players
+        .iter()
+        .map(|player| (player.id, player.team))
+        .collect();
     let castle = lane_position(Lane::Top, viewer.castle_pos());
     if castle.distance(pos) <= VISION_CASTLE_RADIUS {
         return true;
     }
-    for building in buildings.iter().filter(|building| building.owner == viewer) {
-        if building_position(building.owner, building.lane, building.zone, building.cell)
-            .distance(pos)
+    for building in buildings
+        .iter()
+        .filter(|building| lookup_side(&sides, building.owner) == viewer)
+    {
+        if building_position(
+            lookup_side(&sides, building.owner),
+            building.lane,
+            building.zone,
+            building.cell,
+        )
+        .distance(pos)
             <= VISION_BUILDING_RADIUS
         {
             return true;
         }
     }
-    for unit in units.iter().filter(|unit| unit.owner == viewer) {
+    for unit in units
+        .iter()
+        .filter(|unit| lookup_side(&sides, unit.owner) == viewer)
+    {
         if unit.pos.distance(pos) <= VISION_UNIT_RADIUS {
             return true;
         }
@@ -546,6 +562,15 @@ fn next_random_u32(state: &mut u64) -> u32 {
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
     (*state >> 32) as u32
+}
+
+/// Borrow-free side lookup for loops that hold `&mut self.units`.
+fn lookup_side(players: &[(PlayerId, Team)], owner: PlayerId) -> Team {
+    players
+        .iter()
+        .find(|(id, _)| *id == owner)
+        .map(|(_, team)| *team)
+        .unwrap_or(Team::Left)
 }
 
 fn mix_seed(seed: u64) -> u64 {
@@ -837,6 +862,8 @@ impl Default for Economy {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Castle {
+    /// Owning player (PlayerId); `team` is the derived side for rendering.
+    pub owner: PlayerId,
     pub team: Team,
     pub health: i32,
     pub max_health: i32,
@@ -846,7 +873,7 @@ pub struct Castle {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Building {
     pub id: u64,
-    pub owner: Team,
+    pub owner: PlayerId,
     pub kind: BuildingKind,
     pub lane: Lane,
     pub zone: BuildZone,
@@ -859,7 +886,7 @@ pub struct Building {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Unit {
     pub id: u64,
-    pub owner: Team,
+    pub owner: PlayerId,
     pub kind: UnitKind,
     pub lane: Lane,
     pub health: i32,
@@ -891,8 +918,10 @@ pub struct MatchSnapshot {
     #[serde(default)]
     pub seed: u64,
     pub players: Vec<PlayerInfo>,
-    pub economies: [Economy; 2],
-    pub castles: [Castle; 2],
+    #[serde(default)]
+    pub economies: Vec<Economy>,
+    #[serde(default)]
+    pub castles: Vec<Castle>,
     pub buildings: Vec<Building>,
     pub units: Vec<Unit>,
     pub bounty_events: Vec<BountyEvent>,
@@ -905,8 +934,10 @@ pub struct GameSim {
     pub phase: MatchPhase,
     pub tick: u64,
     pub players: Vec<PlayerInfo>,
-    pub economies: [Economy; 2],
-    pub castles: [Castle; 2],
+    /// Per-player economies, indexed by position in `players`.
+    pub economies: Vec<Economy>,
+    /// One castle per player, indexed by position in `players`.
+    pub castles: Vec<Castle>,
     pub buildings: Vec<Building>,
     pub units: Vec<Unit>,
     pub bounty_events: Vec<BountyEvent>,
@@ -918,8 +949,8 @@ pub struct GameSim {
     rng_state: u64,
     income_timer: f32,
     elapsed_secs: f32,
-    castle_regen_accum: [f32; 2],
-    castle_regen_delay_timer: [f32; 2],
+    castle_regen_accum: Vec<f32>,
+    castle_regen_delay_timer: Vec<f32>,
     overtime_damage_accum: [f32; 2],
 }
 
@@ -935,31 +966,13 @@ impl GameSim {
     }
 
     pub fn with_seed(balance: BalanceConfig, seed: u64) -> Self {
-        let starting_economy = Economy {
-            gold: balance.starting_gold,
-            income: balance.base_income,
-        };
-        let default_health = balance.race(RaceKind::Vanguard).castle_health;
         let income_timer = balance.income_interval;
-        Self {
+        let mut sim = Self {
             phase: MatchPhase::Lobby,
             tick: 0,
             players: Vec::new(),
-            economies: [starting_economy.clone(), starting_economy],
-            castles: [
-                Castle {
-                    team: Team::Left,
-                    health: default_health,
-                    max_health: default_health,
-                    armor_type: default_castle_armor(),
-                },
-                Castle {
-                    team: Team::Right,
-                    health: default_health,
-                    max_health: default_health,
-                    armor_type: default_castle_armor(),
-                },
-            ],
+            economies: Vec::new(),
+            castles: Vec::new(),
             buildings: Vec::new(),
             units: Vec::new(),
             bounty_events: Vec::new(),
@@ -971,10 +984,46 @@ impl GameSim {
             rng_state: mix_seed(seed),
             income_timer,
             elapsed_secs: 0.0,
-            castle_regen_accum: [0.0, 0.0],
-            castle_regen_delay_timer: [0.0, 0.0],
+            castle_regen_accum: Vec::new(),
+            castle_regen_delay_timer: Vec::new(),
             overtime_damage_accum: [0.0, 0.0],
-        }
+        };
+        sim.reset_match_state();
+        sim
+    }
+
+    pub fn player_index(&self, player_id: PlayerId) -> Option<usize> {
+        self.players
+            .iter()
+            .position(|player| player.id == player_id)
+    }
+
+    /// Side of a player; defaults to `Left` for unknown ids (callers gate on
+    /// membership first).
+    pub fn side_of(&self, owner: PlayerId) -> Team {
+        self.players
+            .iter()
+            .find(|player| player.id == owner)
+            .map(|player| player.team)
+            .unwrap_or(Team::Left)
+    }
+
+    /// Sum of one side's castle HP (sides may hold several players later).
+    pub fn side_castle_health(&self, team: Team) -> i32 {
+        self.castles
+            .iter()
+            .filter(|castle| castle.team == team)
+            .map(|castle| castle.health)
+            .sum()
+    }
+
+    fn side_alive_castles(&self, team: Team) -> Vec<usize> {
+        self.castles
+            .iter()
+            .enumerate()
+            .filter(|(_, castle)| castle.team == team && castle.health > 0)
+            .map(|(index, _)| index)
+            .collect()
     }
 
     pub fn seed(&self) -> u64 {
@@ -1061,6 +1110,21 @@ impl GameSim {
             rematch_vote: false,
         };
         self.message = format!("{} joined as {:?}.", player.name, player.team);
+        // Per-player state grows with the seat (plan.md Phase 1 item 3).
+        self.economies.push(Economy {
+            gold: self.balance.starting_gold,
+            income: self.balance.base_income,
+        });
+        let castle_health = self.balance.race(RaceKind::Vanguard).castle_health;
+        self.castles.push(Castle {
+            owner: player.id,
+            team: player.team,
+            health: castle_health,
+            max_health: castle_health,
+            armor_type: default_castle_armor(),
+        });
+        self.castle_regen_accum.push(0.0);
+        self.castle_regen_delay_timer.push(0.0);
         self.players.push(player.clone());
         Ok(player)
     }
@@ -1128,16 +1192,17 @@ impl GameSim {
             .iter()
             .position(|b| b.id == building_id)
             .ok_or_else(|| "That building no longer exists.".to_string())?;
-        if self.buildings[index].owner != team {
+        if self.buildings[index].owner != player_id {
             return Err("You can only sell your own buildings.".to_string());
         }
         let kind = self.buildings[index].kind;
         let refund = self.sell_refund(kind);
         let income_bonus = self.balance.building(kind).income_bonus;
         self.buildings.remove(index);
-        self.economies[team.slot()].gold += refund;
+        let owner_index = self.player_index(player_id).unwrap_or(0);
+        self.economies[owner_index].gold += refund;
         if income_bonus > 0 {
-            self.economies[team.slot()].income -= income_bonus;
+            self.economies[owner_index].income -= income_bonus;
         }
         self.message = format!(
             "{team:?} sold {} for {refund}g.",
@@ -1156,13 +1221,19 @@ impl GameSim {
         if self.phase != MatchPhase::Playing {
             return Err("You can only concede during a match.".to_string());
         }
-        let team = self
+        let player = self
             .players
             .iter()
             .find(|p| p.id == player_id)
-            .map(|p| p.team)
             .ok_or_else(|| "Unknown player.".to_string())?;
-        self.castles[team.slot()].health = 0;
+        let team = player.team;
+        for castle in self
+            .castles
+            .iter_mut()
+            .filter(|castle| castle.owner == player_id)
+        {
+            castle.health = 0;
+        }
         self.message = format!("{team:?} conceded the match.");
         self.check_victory();
         Ok(())
@@ -1219,11 +1290,10 @@ impl GameSim {
                 race
             ));
         }
-        if self
-            .buildings
-            .iter()
-            .any(|b| b.owner == team && b.lane == lane && b.zone == zone && b.cell == cell)
-        {
+        let occupied_by_side = self.buildings.iter().any(|b| {
+            self.side_of(b.owner) == team && b.lane == lane && b.zone == zone && b.cell == cell
+        });
+        if occupied_by_side {
             return Err("That cell is already occupied.".to_string());
         }
         let building_name = self.balance.building(kind).name.clone();
@@ -1231,7 +1301,8 @@ impl GameSim {
         let building_health = self.balance.building(kind).max_health;
         let income_bonus = self.balance.building(kind).income_bonus;
         let spawn_timer = self.balance.building(kind).spawn_interval.unwrap_or(0.0);
-        let economy = &mut self.economies[team.slot()];
+        let owner_index = self.player_index(player_id).unwrap_or(0);
+        let economy = &mut self.economies[owner_index];
         if economy.gold < building_cost {
             return Err(format!("Not enough gold for {}.", building_name));
         }
@@ -1240,7 +1311,7 @@ impl GameSim {
         let id = self.take_id();
         self.buildings.push(Building {
             id,
-            owner: team,
+            owner: player_id,
             kind,
             lane,
             zone,
@@ -1313,59 +1384,48 @@ impl GameSim {
 
     fn reset_match_state(&mut self) {
         self.clear_match_entities();
-        let starting_economy = Economy {
-            gold: self.balance.starting_gold,
-            income: self.balance.base_income,
-        };
-        self.economies = [starting_economy.clone(), starting_economy];
-        let left_health = self
+        // One economy and one castle per seat; races set in the lobby pick
+        // the castle HP/armor. Seats without a race get the Vanguard default
+        // so a match can never begin with uninitialized state.
+        self.economies = self
             .players
             .iter()
-            .find(|p| p.team == Team::Left)
-            .and_then(|p| p.race)
-            .map(|race| self.balance.race(race).castle_health)
-            .unwrap_or_else(|| self.balance.race(RaceKind::Vanguard).castle_health);
-        let right_health = self
+            .map(|_| Economy {
+                gold: self.balance.starting_gold,
+                income: self.balance.base_income,
+            })
+            .collect();
+        self.castles = self
             .players
             .iter()
-            .find(|p| p.team == Team::Right)
-            .and_then(|p| p.race)
-            .map(|race| self.balance.race(race).castle_health)
-            .unwrap_or_else(|| self.balance.race(RaceKind::Vanguard).castle_health);
-        let left_armor = self
-            .players
-            .iter()
-            .find(|p| p.team == Team::Left)
-            .and_then(|p| p.race)
-            .map(|race| self.balance.race(race).castle_armor)
-            .unwrap_or_else(default_castle_armor);
-        let right_armor = self
-            .players
-            .iter()
-            .find(|p| p.team == Team::Right)
-            .and_then(|p| p.race)
-            .map(|race| self.balance.race(race).castle_armor)
-            .unwrap_or_else(default_castle_armor);
-        self.castles = [
-            Castle {
-                team: Team::Left,
-                health: left_health,
-                max_health: left_health,
-                armor_type: left_armor,
-            },
-            Castle {
-                team: Team::Right,
-                health: right_health,
-                max_health: right_health,
-                armor_type: right_armor,
-            },
-        ];
+            .map(|player| {
+                let (health, armor) = player
+                    .race
+                    .map(|race| {
+                        let config = self.balance.race(race);
+                        (config.castle_health, config.castle_armor)
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            self.balance.race(RaceKind::Vanguard).castle_health,
+                            default_castle_armor(),
+                        )
+                    });
+                Castle {
+                    owner: player.id,
+                    team: player.team,
+                    health,
+                    max_health: health,
+                    armor_type: armor,
+                }
+            })
+            .collect();
         self.winner = None;
         self.income_timer = self.balance.income_interval;
         self.elapsed_secs = 0.0;
         self.rng_state = mix_seed(self.seed);
-        self.castle_regen_accum = [0.0, 0.0];
-        self.castle_regen_delay_timer = [0.0, 0.0];
+        self.castle_regen_accum = vec![0.0; self.players.len()];
+        self.castle_regen_delay_timer = vec![0.0; self.players.len()];
         self.overtime_damage_accum = [0.0, 0.0];
     }
 
@@ -1396,6 +1456,11 @@ impl GameSim {
 
     fn tick_buildings(&mut self, dt: f32) {
         let mut spawns = Vec::new();
+        let player_sides: Vec<(PlayerId, Team)> = self
+            .players
+            .iter()
+            .map(|player| (player.id, player.team))
+            .collect();
         for building in &mut self.buildings {
             if building.health <= 0 {
                 continue;
@@ -1408,8 +1473,10 @@ impl GameSim {
             if building.spawn_timer <= 0.0 {
                 building.spawn_timer += interval;
                 if let Some(kind) = building_config.spawned_unit {
+                    let side = lookup_side(&player_sides, building.owner);
                     spawns.push((
                         building.owner,
+                        side,
                         building.lane,
                         building.zone,
                         building.cell,
@@ -1419,11 +1486,11 @@ impl GameSim {
             }
         }
 
-        for (owner, lane, zone, cell, kind) in spawns {
+        for (owner, side, lane, zone, cell, kind) in spawns {
             let unit_config = self.balance.unit(kind);
             let max_health = unit_config.max_health;
             let radius = unit_config.radius;
-            let pos = self.free_spawn_position(owner, lane, zone, cell, radius);
+            let pos = self.free_spawn_position(side, lane, zone, cell, radius);
             let id = self.take_id();
             self.units.push(Unit {
                 id,
@@ -1444,12 +1511,19 @@ impl GameSim {
         let mut rng_state = self.rng_state;
         // Ordered by the units Vec (spawn order), never a hash map: equal-distance
         // target ties below must break by id so the sim stays deterministic.
-        let positions: Vec<(u64, Team, Lane, f32, WorldPos, i32, ArmorType)> = self
+        // Owner is a PlayerId; its side travels alongside for targeting.
+        let player_sides: Vec<(PlayerId, Team)> = self
+            .players
+            .iter()
+            .map(|player| (player.id, player.team))
+            .collect();
+        let positions: Vec<(u64, Team, PlayerId, Lane, f32, WorldPos, i32, ArmorType)> = self
             .units
             .iter()
             .map(|u| {
                 (
                     u.id,
+                    self.side_of(u.owner),
                     u.owner,
                     u.lane,
                     u.lane_pos,
@@ -1459,21 +1533,22 @@ impl GameSim {
                 )
             })
             .collect();
-        let mut unit_damage: HashMap<u64, (i32, Team)> = HashMap::new();
+        let mut unit_damage: HashMap<u64, (i32, PlayerId)> = HashMap::new();
         let mut building_damage: HashMap<u64, i32> = HashMap::new();
-        let mut castle_damage = [0, 0];
+        let mut castle_damage = vec![0i32; self.castles.len()];
 
         for unit in &mut self.units {
             let unit_config = self.balance.unit(unit.kind);
             unit.attack_timer = (unit.attack_timer - dt).max(0.0);
+            let unit_side = lookup_side(&player_sides, unit.owner);
             let unit_target = positions
                 .iter()
-                .filter(|(_, team, lane, lane_pos, _, health, _)| {
-                    *team != unit.owner
+                .filter(|(_, team, _, lane, lane_pos, _, health, _)| {
+                    *team != unit_side
                         && *health > 0
                         && unit_lanes_connected(unit.lane, unit.lane_pos, *lane, *lane_pos)
                 })
-                .map(|(id, _, lane, lane_pos, pos, _, armor)| {
+                .map(|(id, _, _, lane, lane_pos, pos, _, armor)| {
                     (
                         *id,
                         unit_combat_distance(unit.lane, unit.pos, *lane, *lane_pos, *pos),
@@ -1487,14 +1562,14 @@ impl GameSim {
                 .buildings
                 .iter()
                 .filter(|building| {
-                    building.owner != unit.owner
+                    lookup_side(&player_sides, building.owner) != unit_side
                         && building.lane == unit.lane
                         && building.zone == BuildZone::Front
                         && building.health > 0
                 })
                 .map(|building| {
                     let pos = building_position(
-                        building.owner,
+                        lookup_side(&player_sides, building.owner),
                         building.lane,
                         building.zone,
                         building.cell,
@@ -1506,11 +1581,21 @@ impl GameSim {
                     )
                 })
                 .filter(|(_, distance, _)| *distance <= unit_config.attack_range)
-                .min_by(|a, b| a.1.total_cmp(&b.1));
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
 
-            let enemy_castle_pos = lane_position(unit.lane, unit.owner.opponent().castle_pos());
-            let enemy_castle_distance =
-                footprint_distance(unit.pos, enemy_castle_pos, CASTLE_FOOTPRINT_RADIUS);
+            // March toward the enemy-side castle at the far end of the lane;
+            // with several enemy players each owns a castle, so pick nearest.
+            let enemy_side = unit_side.opponent();
+            let enemy_castle = self
+                .castles
+                .iter()
+                .filter(|castle| castle.team == enemy_side && castle.health > 0)
+                .map(|castle| (lane_position(unit.lane, castle.team.castle_pos()), castle))
+                .min_by(|a, b| a.0.distance(unit.pos).total_cmp(&b.0.distance(unit.pos)));
+            let enemy_castle_distance = enemy_castle
+                .as_ref()
+                .map(|(pos, _)| footprint_distance(unit.pos, *pos, CASTLE_FOOTPRINT_RADIUS))
+                .unwrap_or(f32::INFINITY);
             let can_attack_castle = enemy_castle_distance <= unit_config.attack_range;
 
             if unit.attack_timer <= 0.0 {
@@ -1539,17 +1624,25 @@ impl GameSim {
                     continue;
                 }
                 if can_attack_castle {
-                    let target_slot = unit.owner.opponent().slot();
+                    let (castle_index, castle_armor) = enemy_castle
+                        .as_ref()
+                        .map(|(_, castle)| {
+                            (
+                                self.castles
+                                    .iter()
+                                    .position(|c| c.owner == castle.owner)
+                                    .unwrap_or(0),
+                                castle.armor_type,
+                            )
+                        })
+                        .unwrap_or((0, ArmorType::Fortified));
                     let rolled_damage = roll_base_damage(
                         &mut rng_state,
                         unit_config.damage,
                         unit_config.damage_variance,
                     );
-                    castle_damage[target_slot] += typed_damage(
-                        rolled_damage,
-                        unit_config.attack_type,
-                        self.castles[target_slot].armor_type,
-                    );
+                    castle_damage[castle_index] +=
+                        typed_damage(rolled_damage, unit_config.attack_type, castle_armor);
                     unit.attack_timer = unit_config.attack_interval;
                     continue;
                 }
@@ -1558,7 +1651,7 @@ impl GameSim {
             if unit_target.is_none() && building_target.is_none() && !can_attack_castle {
                 let old_pos = unit.pos;
                 let max_step = unit_config.speed * dt;
-                unit.pos.x += unit.owner.direction() * max_step;
+                unit.pos.x += unit_side.direction() * max_step;
                 let lane_y = lane_center_y(unit.lane);
                 let y_delta = (lane_y - unit.pos.y).clamp(-max_step * 0.35, max_step * 0.35);
                 unit.pos.y += y_delta;
@@ -1574,14 +1667,21 @@ impl GameSim {
         self.separate_units();
         self.rng_state = rng_state;
 
-        let mut bounty_awards = [0, 0];
+        let player_indices: HashMap<PlayerId, usize> = self
+            .players
+            .iter()
+            .enumerate()
+            .map(|(index, player)| (player.id, index))
+            .collect();
+        let mut bounty_awards: HashMap<usize, i32> = HashMap::new();
         let mut pending_bounty_events = Vec::new();
         for unit in &mut self.units {
             if let Some((damage, killer)) = unit_damage.get(&unit.id) {
                 unit.health -= *damage;
                 if unit.health <= 0 {
                     let bounty = self.balance.unit(unit.kind).bounty.max(0);
-                    bounty_awards[killer.slot()] += bounty;
+                    let killer_index = player_indices.get(killer).copied().unwrap_or(0);
+                    *bounty_awards.entry(killer_index).or_insert(0) += bounty;
                     if bounty > 0 {
                         pending_bounty_events.push((
                             *killer,
@@ -1596,30 +1696,29 @@ impl GameSim {
             }
         }
         self.units.retain(|u| u.health > 0);
-        let mut destroyed_income = [0, 0];
+        let mut destroyed_income: HashMap<usize, i32> = HashMap::new();
         for building in &mut self.buildings {
             if let Some(damage) = building_damage.get(&building.id) {
                 building.health -= *damage;
                 if building.health <= 0 {
-                    destroyed_income[building.owner.slot()] +=
+                    let owner_index = player_indices.get(&building.owner).copied().unwrap_or(0);
+                    *destroyed_income.entry(owner_index).or_insert(0) +=
                         self.balance.building(building.kind).income_bonus;
                 }
             }
         }
         self.buildings.retain(|building| building.health > 0);
-        for (idx, lost_income) in destroyed_income.into_iter().enumerate() {
-            if lost_income > 0 {
-                self.economies[idx].income -= lost_income;
-            }
+        for (owner_index, lost_income) in destroyed_income {
+            self.economies[owner_index].income -= lost_income;
         }
-        for (idx, bounty) in bounty_awards.into_iter().enumerate() {
-            self.economies[idx].gold += bounty;
+        for (owner_index, bounty) in bounty_awards {
+            self.economies[owner_index].gold += bounty;
         }
-        for (team, amount, lane, lane_pos, pos, unit_kind) in pending_bounty_events {
+        for (killer, amount, lane, lane_pos, pos, unit_kind) in pending_bounty_events {
             let id = self.take_id();
             self.bounty_events.push(BountyEvent {
                 id,
-                team,
+                team: self.side_of(killer),
                 amount,
                 lane,
                 lane_pos,
@@ -1631,7 +1730,7 @@ impl GameSim {
         self.apply_castle_regen_and_damage(dt, castle_damage);
     }
 
-    fn apply_castle_regen_and_damage(&mut self, dt: f32, castle_damage: [i32; 2]) {
+    fn apply_castle_regen_and_damage(&mut self, dt: f32, castle_damage: Vec<i32>) {
         let regen_per_second = self.balance.castle_regen_per_second.max(0.0);
         let regen_delay = self.balance.castle_regen_delay_secs.max(0.0);
         for (idx, damage) in castle_damage.into_iter().enumerate() {
@@ -1803,18 +1902,38 @@ impl GameSim {
     }
 
     fn board_pressure(&self, team: Team) -> f32 {
+        let player_sides: Vec<(PlayerId, Team)> = self
+            .players
+            .iter()
+            .map(|player| (player.id, player.team))
+            .collect();
         let buildings = self
             .buildings
             .iter()
-            .filter(|building| building.owner == team)
+            .filter(|building| lookup_side(&player_sides, building.owner) == team)
             .count() as f32;
-        let units = self.units.iter().filter(|unit| unit.owner == team).count() as f32;
+        let units = self
+            .units
+            .iter()
+            .filter(|unit| lookup_side(&player_sides, unit.owner) == team)
+            .count() as f32;
         1.0 + buildings * 2.0 + units
     }
 
+    /// A side loses when every castle belonging to it is dead; if both sides
+    /// fall on the same tick the adjudication score picks the winner.
     fn check_victory(&mut self) {
-        let left_dead = self.castles[Team::Left.slot()].health <= 0;
-        let right_dead = self.castles[Team::Right.slot()].health <= 0;
+        if self.players.is_empty() {
+            return;
+        }
+        let side_dead = |team: Team| {
+            self.castles
+                .iter()
+                .filter(|castle| castle.team == team)
+                .all(|castle| castle.health <= 0)
+        };
+        let left_dead = side_dead(Team::Left);
+        let right_dead = side_dead(Team::Right);
         if left_dead && right_dead {
             self.finish(self.adjudicated_winner());
         } else if left_dead {
@@ -1835,18 +1954,34 @@ impl GameSim {
     }
 
     fn adjudication_score(&self, team: Team) -> i32 {
-        let castle = self.castles[team.slot()].health.max(0) * 10;
-        let economy = self.economies[team.slot()].gold + self.economies[team.slot()].income * 5;
+        let player_sides: Vec<(PlayerId, Team)> = self
+            .players
+            .iter()
+            .map(|player| (player.id, player.team))
+            .collect();
+        let castle = self
+            .castles
+            .iter()
+            .filter(|castle| castle.team == team)
+            .map(|castle| castle.health.max(0) * 10)
+            .sum::<i32>();
+        let economy: i32 = self
+            .players
+            .iter()
+            .enumerate()
+            .filter(|(_, player)| player.team == team)
+            .map(|(index, _)| self.economies[index].gold + self.economies[index].income * 5)
+            .sum();
         let buildings = self
             .buildings
             .iter()
-            .filter(|building| building.owner == team)
+            .filter(|building| lookup_side(&player_sides, building.owner) == team)
             .map(|building| self.balance.building(building.kind).cost)
             .sum::<i32>();
         let units = self
             .units
             .iter()
-            .filter(|unit| unit.owner == team)
+            .filter(|unit| lookup_side(&player_sides, unit.owner) == team)
             .map(|unit| unit.health.max(0))
             .sum::<i32>();
         castle + economy + buildings + units
@@ -1980,7 +2115,7 @@ mod tests {
     ) -> Unit {
         Unit {
             id,
-            owner,
+            owner: PlayerId(owner.slot() as u8 + 1),
             kind,
             lane,
             health,

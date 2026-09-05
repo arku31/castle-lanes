@@ -29,7 +29,7 @@ pub(crate) fn detect_combat_vfx(
         tracker.units.clear();
         tracker.buildings.clear();
         tracker.seen_bounty_events.clear();
-        tracker.castle_health = [0, 0];
+        tracker.castle_health = Vec::new();
         return;
     }
     let balance = active_balance(&state);
@@ -56,17 +56,18 @@ pub(crate) fn detect_combat_vfx(
                     let damage = previous.health - unit.health;
                     let pos = unit_world_pos(unit);
                     let config = balance.unit(unit.kind);
-                    let attacker = infer_attacker(snapshot, &balance, pos, unit.owner)
-                        .map(|attacker| {
+                    let unit_side = side_of_player(snapshot, unit.owner);
+                    let attacker =
+                        infer_attacker(snapshot, &balance, pos, unit_side).map(|attacker| {
                             (
                                 unit_world_pos(attacker),
                                 balance.unit(attacker.kind).attack_type,
                             )
-                        })
-                        .unwrap_or((
-                            Vec2::new(pos.x - unit.owner.direction() * 38.0, pos.y),
-                            config.attack_type,
-                        ));
+                        });
+                    let attacker = attacker.unwrap_or((
+                        Vec2::new(pos.x - unit_side.direction() * 38.0, pos.y),
+                        config.attack_type,
+                    ));
                     spawn_combat_impact(&mut commands, pos, damage, attacker.0, attacker.1, false);
                     if unit.health > 0 {
                         sfx.push(match config.attack_mode {
@@ -85,18 +86,19 @@ pub(crate) fn detect_combat_vfx(
             if let Some(previous) = tracker.buildings.get(&building.id) {
                 if building.health < previous.health {
                     let damage = previous.health - building.health;
-                    let pos = building_hit_pos(building);
-                    let attacker = infer_attacker(snapshot, &balance, pos, building.owner)
-                        .map(|attacker| {
+                    let pos = building_hit_pos(building, side_of_player(snapshot, building.owner));
+                    let building_side = side_of_player(snapshot, building.owner);
+                    let attacker =
+                        infer_attacker(snapshot, &balance, pos, building_side).map(|attacker| {
                             (
                                 unit_world_pos(attacker),
                                 balance.unit(attacker.kind).attack_type,
                             )
-                        })
-                        .unwrap_or((
-                            Vec2::new(pos.x - building.owner.opponent().direction() * 58.0, pos.y),
-                            AttackType::Siege,
-                        ));
+                        });
+                    let attacker = attacker.unwrap_or((
+                        Vec2::new(pos.x - building_side.opponent().direction() * 58.0, pos.y),
+                        AttackType::Siege,
+                    ));
                     spawn_structure_impact(&mut commands, pos, damage, attacker.0, attacker.1);
                 }
             }
@@ -106,8 +108,18 @@ pub(crate) fn detect_combat_vfx(
             if !is_castle_visible(snapshot, net.team, castle.team) {
                 continue;
             }
-            let slot = castle.team.slot();
-            let previous = tracker.castle_health[slot];
+            let Some(index) = snapshot
+                .castles
+                .iter()
+                .position(|tracked| tracked.owner == castle.owner)
+            else {
+                continue;
+            };
+            let previous = tracker
+                .castle_health
+                .get(index)
+                .copied()
+                .unwrap_or(castle.health);
             if previous > 0 && castle.health < previous {
                 let damage = previous - castle.health;
                 let pos = castle_world_pos(castle.team) + Vec2::new(0.0, 52.0);
@@ -167,10 +179,11 @@ pub(crate) fn detect_combat_vfx(
             )
         })
         .collect();
-    tracker.castle_health = [
-        snapshot.castles[Team::Left.slot()].health,
-        snapshot.castles[Team::Right.slot()].health,
-    ];
+    tracker.castle_health = snapshot
+        .castles
+        .iter()
+        .map(|castle| castle.health)
+        .collect::<Vec<_>>();
     tracker.initialized = true;
 }
 
@@ -219,7 +232,7 @@ pub(crate) fn infer_attacker<'a>(
     snapshot
         .units
         .iter()
-        .filter(|unit| unit.owner != target_team)
+        .filter(|unit| side_of_player(snapshot, unit.owner) != target_team)
         .map(|unit| {
             let unit_config = balance.unit(unit.kind);
             let pos = unit_world_pos(unit);
@@ -231,9 +244,8 @@ pub(crate) fn infer_attacker<'a>(
         .map(|(unit, _, _)| unit)
 }
 
-pub(crate) fn building_hit_pos(building: &Building) -> Vec2 {
-    cell_to_world(building.owner, building.lane, building.zone, building.cell)
-        + Vec2::new(0.0, 14.0)
+pub(crate) fn building_hit_pos(building: &Building, side: Team) -> Vec2 {
+    cell_to_world(side, building.lane, building.zone, building.cell) + Vec2::new(0.0, 14.0)
 }
 
 pub(crate) fn spawn_structure_impact(

@@ -220,7 +220,7 @@ fn run_match(
                 .iter()
                 .map(|building| {
                     (
-                        building.owner,
+                        sim.side_of(building.owner),
                         building.lane,
                         building.zone,
                         (building.cell.x, building.cell.y),
@@ -253,10 +253,15 @@ fn run_match(
 /// Count buildings owned by a side; `producers_only` counts unit producers,
 /// otherwise economy buildings.
 fn count_owned(sim: &GameSim, team: Team, producers_only: bool) -> usize {
+    let sides: std::collections::HashMap<u64, Team> = sim
+        .players
+        .iter()
+        .map(|player| (player.id.0 as u64, player.team))
+        .collect();
     sim.buildings
         .iter()
         .filter(|building| {
-            building.owner == team
+            sides.get(&(building.owner.0 as u64)) == Some(&team)
                 && sim.balance.building(building.kind).spawned_unit.is_some() == producers_only
         })
         .count()
