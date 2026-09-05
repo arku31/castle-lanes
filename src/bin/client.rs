@@ -97,6 +97,16 @@ struct WorldHover {
 }
 
 #[derive(Resource, Default)]
+struct HelpOverlay {
+    open: bool,
+}
+
+#[derive(Resource, Default)]
+struct MatchHints {
+    step: usize,
+}
+
+#[derive(Resource, Default)]
 struct CameraHome {
     initialized_for: Option<Team>,
 }
@@ -332,6 +342,8 @@ fn main() {
         .init_resource::<RenderInterp>()
         .init_resource::<SceneRegistry>()
         .init_resource::<SfxQueue>()
+        .init_resource::<HelpOverlay>()
+        .init_resource::<MatchHints>()
         .insert_resource(MasterVolume::load())
         .add_systems(Startup, setup)
         .add_systems(
@@ -702,7 +714,11 @@ fn menu_and_lobby_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut net: ResMut<ClientNet>,
     mut state: ResMut<SnapshotState>,
+    mut help: ResMut<HelpOverlay>,
 ) {
+    if keys.just_pressed(KeyCode::KeyH) {
+        help.open = !help.open;
+    }
     if keys.just_pressed(KeyCode::Enter) {
         if !net.connected {
             send_join(&mut net);
@@ -2083,6 +2099,8 @@ fn redraw_game_ui(
     world_selection: Res<WorldSelection>,
     _world_hover: Res<WorldHover>,
     building_icons: Res<BuildingIconAssets>,
+    help: Res<HelpOverlay>,
+    mut hints: ResMut<MatchHints>,
 ) {
     for entity in &ui_query {
         commands.entity(entity).despawn();
@@ -2185,6 +2203,102 @@ fn redraw_game_ui(
     if race_popup_open {
         spawn_race_selection_popup(&mut commands, &balance, selected_race);
     }
+
+    if help.open {
+        spawn_help_overlay(&mut commands);
+    }
+    spawn_match_hint(&mut commands, &state, &net, &mut hints);
+}
+
+/// First-match guidance: one short line at a time, advancing as the player
+/// demonstrably completes each step (plan.md P0-6).
+fn spawn_match_hint(
+    commands: &mut Commands,
+    state: &SnapshotState,
+    net: &ClientNet,
+    hints: &mut MatchHints,
+) {
+    let hint = match (&state.snapshot, net.team) {
+        (None, _) => Some("Press Enter to connect, then create or join a game."),
+        (Some(snapshot), _) if snapshot.phase == MatchPhase::Lobby => {
+            Some("Pick a race, then press the Ready button.")
+        }
+        (Some(snapshot), Some(team)) if snapshot.phase == MatchPhase::Playing => {
+            let own = snapshot
+                .buildings
+                .iter()
+                .filter(|building| building.owner == team)
+                .count();
+            let enemy_castle_hurt = snapshot
+                .castles
+                .iter()
+                .any(|castle| castle.health < castle.max_health * 7 / 10);
+            // Only advance once the step's condition holds.
+            if hints.step == 1 && own >= 1 {
+                hints.step = 2;
+            }
+            if hints.step == 2 && own >= 3 {
+                hints.step = 3;
+            }
+            if hints.step == 3 && enemy_castle_hurt {
+                hints.step = 4;
+            }
+            match hints.step {
+                0 => {
+                    hints.step = 1;
+                    Some("Press 1-8 to pick a building, then click a glowing cell.")
+                }
+                1 => Some("Press 1-8 to pick a building, then click a glowing cell."),
+                2 => Some("Top lane buildings feed the Top lane - build in both lanes."),
+                3 => Some("Kills pay bounty gold. An economy building pays every tick."),
+                4 => Some("Castle regen pauses while under attack - push your advantage."),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let Some(hint) = hint else {
+        return;
+    };
+    spawn_ui_rect(
+        commands,
+        Vec2::new(0.0, TOP_BAR_Y + 26.0),
+        Vec2::new(560.0, 22.0),
+        Color::srgba(0.05, 0.045, 0.03, 0.88),
+        48.0,
+    );
+    spawn_ui_label(
+        commands,
+        &format!("HINT: {hint}"),
+        Vec2::new(0.0, TOP_BAR_Y + 26.0),
+        12.0,
+        TEXT_GOLD,
+        49.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
+}
+
+fn spawn_help_overlay(commands: &mut Commands) {
+    spawn_ui_rect(
+        commands,
+        Vec2::ZERO,
+        Vec2::new(720.0, 560.0),
+        Color::srgba(0.04, 0.036, 0.03, 0.97),
+        60.0,
+    );
+    spawn_ui_label(
+        commands,
+        &format!(
+            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nR rematch   H help   V mute"
+        ),
+        Vec2::new(0.0, 0.0),
+        13.0,
+        TEXT_PARCHMENT,
+        61.0,
+        Anchor::CENTER,
+        Justify::Center,
+    );
 }
 
 fn spawn_top_hud(
@@ -2898,7 +3012,7 @@ fn building_tooltip_text(balance: &BalanceConfig, kind: BuildingKind) -> String 
     if let Some(unit_kind) = config.spawned_unit {
         let unit = balance.unit(unit_kind);
         format!(
-            "{}\nCost: {} gold   Spawns every {:.1}s\nProduces: {} ({})   Bounty: {}g\nDamage: {} {}   Armor: {}\nMove: {:.1}   AtkR: {:.1}   AS: {:.2}/s",
+            "{}\nCost: {} gold   Spawns every {:.1}s\nProduces: {} ({})   Bounty: {}g\nDamage: {} {}   Armor: {}\n{}\nMove: {:.1}   AtkR: {:.1}   AS: {:.2}/s",
             config.name,
             config.cost,
             config.spawn_interval.unwrap_or_default(),
@@ -2908,6 +3022,7 @@ fn building_tooltip_text(balance: &BalanceConfig, kind: BuildingKind) -> String 
             damage_range_text(unit.damage, unit.damage_variance),
             unit.attack_type.label(),
             unit.armor_type.label(),
+            counter_summary(unit.attack_type),
             unit.speed,
             unit.attack_range,
             attacks_per_second(unit.attack_interval),
@@ -3036,8 +3151,14 @@ fn spawn_race_selection_popup(
 
 fn race_card_summary(balance: &BalanceConfig, race: RaceKind) -> String {
     let config = balance.race(race);
+    let blurb = match race {
+        RaceKind::Vanguard => "Steady frontline + ranged. Flexible and forgiving.",
+        RaceKind::Grove => "Cheap swarms, tanky guards, healing. Wins long games.",
+        RaceKind::Ember => "Fast cheap attackers and burst casters. Press early.",
+    };
     format!(
-        "Castle HP: {}\nArmor: {}\nBuildings: {}\nUnit halls, economy, siege",
+        "{}\nCastle HP: {}   Armor: {}   Buildings: {}",
+        blurb,
         config.castle_health,
         config.castle_armor.label(),
         config.buildings.len()
@@ -3268,6 +3389,33 @@ fn team_minimap_color(team: Team, _viewer_team: Option<Team>) -> Color {
     // One color per side everywhere (units, bars, minimap, bounty text) so
     // team identity reads at a glance even for spectators.
     team_color(team)
+}
+
+/// Readable counter line computed from the actual damage matrix, e.g.
+/// "Strong vs Heavy(130%) / weak vs Light(70%)" - plan.md P0-6.
+fn counter_summary(attack: AttackType) -> String {
+    let armors = [
+        (ArmorType::Normal, "Normal"),
+        (ArmorType::Light, "Light"),
+        (ArmorType::Heavy, "Heavy"),
+        (ArmorType::Fortified, "Fort"),
+        (ArmorType::Unarmored, "Unarm"),
+    ];
+    let mut strong = Vec::new();
+    let mut weak = Vec::new();
+    for (armor, label) in armors {
+        let multiplier = castle_lanes::sim::attack_multiplier(attack, armor);
+        if multiplier >= 1.2 {
+            strong.push(format!("{label} {}%", (multiplier * 100.0) as i32));
+        } else if multiplier <= 0.85 {
+            weak.push(format!("{label} {}%", (multiplier * 100.0) as i32));
+        }
+    }
+    format!(
+        "Counters: strong vs {} / weak vs {}",
+        if strong.is_empty() { "-".to_string() } else { strong.join(", ") },
+        if weak.is_empty() { "-".to_string() } else { weak.join(", ") }
+    )
 }
 
 fn attacks_per_second(attack_interval: f32) -> f32 {
