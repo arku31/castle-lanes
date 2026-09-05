@@ -14,7 +14,7 @@
 //! to compare outcomes across seeds, not to model humans.
 
 use castle_lanes::sim::{
-    BalanceConfig, BuildZone, BuildingKind, DEFAULT_BALANCE_PATH, GameSim, GRID_H, GRID_W, Lane,
+    BalanceConfig, BuildZone, BuildingKind, DEFAULT_BALANCE_PATH, GRID_H, GRID_W, GameSim, Lane,
     MatchPhase, PlayerId, RaceKind, Team, UnitKind,
 };
 use std::collections::{HashMap, HashSet};
@@ -144,15 +144,11 @@ impl Args {
                     idx += 1;
                 }
                 "--max-mins" if idx + 1 < argv.len() => {
-                    max_minutes = argv[idx + 1]
-                        .parse()
-                        .expect("--max-mins must be a number");
+                    max_minutes = argv[idx + 1].parse().expect("--max-mins must be a number");
                     idx += 1;
                 }
                 "--seed-base" if idx + 1 < argv.len() => {
-                    seed_base = argv[idx + 1]
-                        .parse()
-                        .expect("--seed-base must be a number");
+                    seed_base = argv[idx + 1].parse().expect("--seed-base must be a number");
                     idx += 1;
                 }
                 "--archetype" if idx + 1 < argv.len() => {
@@ -240,8 +236,8 @@ fn run_match(
         }
     }
 
-    let adjudicated = sim.phase == MatchPhase::Playing
-        || sim.castles.iter().all(|castle| castle.health <= 0);
+    let adjudicated =
+        sim.phase == MatchPhase::Playing || sim.castles.iter().all(|castle| castle.health <= 0);
 
     MatchOutcome {
         left_race,
@@ -278,11 +274,7 @@ impl SideBot {
         }
     }
 
-    fn act(
-        &mut self,
-        sim: &mut GameSim,
-        occupied: &[(Team, Lane, BuildZone, (i32, i32))],
-    ) {
+    fn act(&mut self, sim: &mut GameSim, occupied: &[(Team, Lane, BuildZone, (i32, i32))]) {
         if sim.phase != MatchPhase::Playing {
             return;
         }
@@ -291,12 +283,19 @@ impl SideBot {
             Some(race) => race,
             None => return,
         };
-        let mut options: Vec<BuildingOption> = sim.balance.race(race).buildings.iter().map(|kind| {
-            let config = sim.balance.building(*kind);
-            (config.kind, config.cost, config.spawned_unit)
-        }).collect();
+        let mut options: Vec<BuildingOption> = sim
+            .balance
+            .race(race)
+            .buildings
+            .iter()
+            .map(|kind| {
+                let config = sim.balance.building(*kind);
+                (config.kind, config.cost, config.spawned_unit)
+            })
+            .collect();
         options.sort_by(|a, b| b.1.cmp(&a.1)); // most expensive first
-        let producers: Vec<BuildingOption> = options.iter().copied().filter(|o| o.2.is_some()).collect();
+        let producers: Vec<BuildingOption> =
+            options.iter().copied().filter(|o| o.2.is_some()).collect();
         let econ: Vec<BuildingOption> = options.iter().copied().filter(|o| o.2.is_none()).collect();
         let mut bought = 0;
         let mut attempts = 0;
@@ -312,11 +311,8 @@ impl SideBot {
                     } else {
                         // Rotate through the producer roster cost-ascending so
                         // unit-usage stats exercise every building.
-                        let affordable: Vec<_> = producers
-                            .iter()
-                            .rev()
-                            .filter(|o| o.1 <= gold)
-                            .collect();
+                        let affordable: Vec<_> =
+                            producers.iter().rev().filter(|o| o.1 <= gold).collect();
                         let pick = affordable
                             .get(self.producer_rotation % affordable.len().max(1))
                             .copied();
@@ -333,9 +329,7 @@ impl SideBot {
                     let owns_enough = producer_count >= 2;
                     if owns_enough && expensive.is_some_and(|o| o.1 <= gold) {
                         (expensive, BuildZone::Front)
-                    } else if !owns_enough
-                        && cheapest.is_some_and(|o| o.1 <= gold)
-                    {
+                    } else if !owns_enough && cheapest.is_some_and(|o| o.1 <= gold) {
                         (cheapest, BuildZone::Front)
                     } else if expensive.is_some_and(|o| o.1 <= gold) {
                         (expensive, BuildZone::Front)
@@ -345,10 +339,7 @@ impl SideBot {
                 }
                 Archetype::Econ => {
                     if econ_count * 2 < producer_count + 1 {
-                        (
-                            econ.iter().rev().find(|o| o.1 <= gold),
-                            BuildZone::Back,
-                        )
+                        (econ.iter().rev().find(|o| o.1 <= gold), BuildZone::Back)
                     } else {
                         (
                             producers.iter().rev().find(|o| o.1 <= gold),
@@ -395,7 +386,9 @@ impl SideBot {
 
 fn print_win_matrix(outcomes: &[MatchOutcome]) {
     let races = RaceKind::ALL;
-    println!("== Left-side win rate, decisive games only (rows = left race, cols = right race; '-' = no decisive games) ==");
+    println!(
+        "== Left-side win rate, decisive games only (rows = left race, cols = right race; '-' = no decisive games) =="
+    );
     print!("{:>10}", "");
     for race in races {
         print!("{:>10}", race.fallback_name());
@@ -408,8 +401,11 @@ fn print_win_matrix(outcomes: &[MatchOutcome]) {
                 .iter()
                 .filter(|o| o.left_race == left && o.right_race == right)
                 .collect();
-            let finished: Vec<&MatchOutcome> =
-                matching.iter().copied().filter(|o| o.winner.is_some()).collect();
+            let finished: Vec<&MatchOutcome> = matching
+                .iter()
+                .copied()
+                .filter(|o| o.winner.is_some())
+                .collect();
             let wins = finished
                 .iter()
                 .filter(|o| o.winner == Some(Team::Left))

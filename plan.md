@@ -1,7 +1,7 @@
 # Castle Lanes — Path to a Really Good Game
 
-Status: proposal for review → we implement the **Today** slice right after approval.
-Baseline: commit `a79f462` + current uncommitted working tree (lobby/delta/fog work, ~1,360 changed lines — **land this first** so we build on a clean base).
+Status: **Phase 0 COMPLETE** (implemented & committed 2026-09-05). All P0 items landed: determinism + `sim_balance` harness, besieged regen + sudden-death ramp (`docs/balance-report.md`), persistent/interpolated rendering, team accent colors, procedural audio, help overlay + hints + counter tooltips, lightyear removed. Next up: **Phase 1** (server-side fog, reconnect grace, sim de-hardcoding for team play, binary encoding, sell/refund, surrender, match recording, CI).
+Original baseline: commit `a79f462` + working tree (landed as `469d93d`).
 
 ---
 

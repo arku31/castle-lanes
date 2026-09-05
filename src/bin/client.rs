@@ -1292,11 +1292,7 @@ impl MasterVolume {
     }
 
     fn effective(&self) -> f32 {
-        if self.muted {
-            0.0
-        } else {
-            self.value
-        }
+        if self.muted { 0.0 } else { self.value }
     }
 }
 
@@ -1318,10 +1314,7 @@ fn play_sfx_queue(
     }
 }
 
-fn volume_toggle_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut volume: ResMut<MasterVolume>,
-) {
+fn volume_toggle_input(keys: Res<ButtonInput<KeyCode>>, mut volume: ResMut<MasterVolume>) {
     if keys.just_pressed(KeyCode::KeyV) {
         volume.muted = !volume.muted;
         volume.save();
@@ -1971,16 +1964,15 @@ fn update_object_highlight(
             .selected
             .or(world_hover.hovered)
             .filter(|selected| {
-                matches!(selected, SelectedObject::Building(_) | SelectedObject::Castle(_))
+                matches!(
+                    selected,
+                    SelectedObject::Building(_) | SelectedObject::Castle(_)
+                )
             }) {
             Some(SelectedObject::Building(id)) => {
                 if let Some(building) = snapshot.buildings.iter().find(|b| b.id == id) {
-                    static_pos = cell_to_world(
-                        building.owner,
-                        building.lane,
-                        building.zone,
-                        building.cell,
-                    );
+                    static_pos =
+                        cell_to_world(building.owner, building.lane, building.zone, building.cell);
                     static_pos.y -= 2.0;
                     spec_size = Vec2::splat(CELL + 4.0);
                     spec_color = Color::srgba(0.95, 0.76, 0.24, 0.42);
@@ -3413,8 +3405,16 @@ fn counter_summary(attack: AttackType) -> String {
     }
     format!(
         "Counters: strong vs {} / weak vs {}",
-        if strong.is_empty() { "-".to_string() } else { strong.join(", ") },
-        if weak.is_empty() { "-".to_string() } else { weak.join(", ") }
+        if strong.is_empty() {
+            "-".to_string()
+        } else {
+            strong.join(", ")
+        },
+        if weak.is_empty() {
+            "-".to_string()
+        } else {
+            weak.join(", ")
+        }
     )
 }
 
@@ -4378,7 +4378,10 @@ fn spawn_unit_visual(
     let sprite_size = unit_sprite_size(unit.kind);
     let world = sim_pos_to_world(unit.pos);
     let root = commands
-        .spawn((Transform::from_xyz(world.x, world.y, UNIT_ROOT_Z), SceneEntity))
+        .spawn((
+            Transform::from_xyz(world.x, world.y, UNIT_ROOT_Z),
+            SceneEntity,
+        ))
         .id();
     let shadow = spawn_rect(
         commands,
@@ -4394,7 +4397,9 @@ fn spawn_unit_visual(
         Team::Left => Color::srgb(0.86, 0.92, 1.0),
         Team::Right => Color::srgb(1.0, 0.90, 0.88),
     };
-    let sprite_entity = commands.spawn((sprite, Transform::from_xyz(0.0, 12.0, 0.0))).id();
+    let sprite_entity = commands
+        .spawn((sprite, Transform::from_xyz(0.0, 12.0, 0.0)))
+        .id();
     let team_stripe = spawn_rect(
         commands,
         Vec2::new(0.0, -20.0),
@@ -4423,8 +4428,7 @@ fn spawn_unit_visual(
         Color::srgb(0.10, 0.11, 0.11),
         0.6,
     );
-    let health_pct =
-        (unit.health.max(0) as f32 / config.max_health.max(1) as f32).clamp(0.0, 1.0);
+    let health_pct = (unit.health.max(0) as f32 / config.max_health.max(1) as f32).clamp(0.0, 1.0);
     let health_fill = spawn_rect(
         commands,
         Vec2::new(-(UNIT_HEALTH_BAR_W * (1.0 - health_pct)) / 2.0, -24.0),
@@ -4432,16 +4436,14 @@ fn spawn_unit_visual(
         team_color(unit.owner),
         1.6,
     );
-    commands
-        .entity(root)
-        .add_children(&[
-            shadow,
-            team_stripe,
-            sprite_entity,
-            badge_attack,
-            badge_armor,
-            health_fill,
-        ]);
+    commands.entity(root).add_children(&[
+        shadow,
+        team_stripe,
+        sprite_entity,
+        badge_attack,
+        badge_armor,
+        health_fill,
+    ]);
     UnitVisual {
         root,
         sprite: sprite_entity,

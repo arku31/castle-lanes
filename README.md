@@ -47,6 +47,8 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `+`, `-`: zoom the camera.
 - `Home`: reset the camera.
 - `R`: vote for rematch after game over.
+- `H`: open or close the in-game help/rules overlay.
+- `V`: mute or unmute all sound (persisted to `config/client_settings.json`).
 - `--race vanguard|grove|ember`: client/bot flag for demo/test race selection.
 - `--auto-ready`: client flag for demo/test runs that readies after joining.
 - `--auto-build-demo`: client flag for demo/test runs that places your first race building after match start.
@@ -101,7 +103,11 @@ See [docs/assets.md](docs/assets.md) for the asset creation pipeline, prompt sha
 - Units also expose movement speed, attack speed, attack range, and attack mode (`Melee` or `Ranged`) through `config/balance.json`; the client shows these in the inspect/build UI.
 - Each unit has a configured bounty. Killing a unit awards that gold to the killer's team.
 - Unit `damage` is a midpoint, not a fixed number. `damage_variance: 0.10` means a unit with `50` damage rolls from `45` to `55` before attack/armor multipliers are applied.
-- The client renders inferred combat readability effects from server snapshots: floating high-contrast damage numbers, attack-type streaks, hit bursts, structure impact chips, and bounty text.
-- Sudden death starts at 3:00. Castles take pressure damage based on the enemy's buildings and units, which helps matches resolve instead of stalling forever.
+- The client renders inferred combat readability effects from server snapshots: floating high-contrast damage numbers, attack-type streaks, hit bursts, structure impact chips, and bounty text. Team colors (Left blue, Right red) mark units, health bars, buildings, castles, minimap dots, and bounty text.
+- Unit sprites interpolate between server snapshots and animate on the display clock, so motion is smooth even though snapshots arrive at 10 Hz.
+- All sound effects are procedurally synthesized by `tools/gen_sfx.py` (run it to regenerate `assets/audio/*.wav`); music is a quiet ambient drone.
+- Castle regeneration pauses for `castle_regen_delay_secs` after taking damage, so early pressure sticks instead of being healed off.
+- Sudden death starts at `sudden_death_start` (8:00) and its pressure ramps at `sudden_death_ramp_per_minute` per minute until a castle falls.
+- The simulation is deterministic per match seed (verified by unit tests); `cargo run --release --example sim_balance -- --games 25` replays bot-vs-bot matches to produce `docs/balance-report.md`.
 
 The server owns all gameplay state. Clients send only join, ready, placement, and rematch intents.
