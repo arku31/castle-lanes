@@ -29,6 +29,20 @@ Phase 1 progress:
 - [x] Client module refactor (item 8) — client.rs split into
       src/bin/client/{main,net,scene,ui,input,vfx,audio}.rs
 
+Phase 2 progress:
+- [x] Counter-chain design doc (item 1) — docs/counter-chains.md: all 21
+      units role-assigned across eight counter loops
+- [x] Data-driven unit abilities (item 2) — heal/splash/slow/regeneration/
+      berserk behind serde defaults; 8 units equipped; 5 new tests
+- [x] Branching building upgrades (item 3) — Range Tower/Root Den/Cinder Pit
+      each gain two branches (6 new buildings, 6 new units with abilities);
+      UpgradeBuilding intent (v9), U/I keys, star marker, sell at upgraded value
+- [ ] Commander powers (item 4) — OPTIONAL, awaiting user keep/drop
+- [ ] Animation + projectile pass (item 5) — Vanguard ranged projectile
+      pilot DONE; multi-frame sprite generation still open
+- [ ] UI texture pass (item 5/7) — generated panel frames + display font
+- [ ] Harness ability bots + lane-flip metric (item 8)
+
 Screenshots for the README remain blocked: ZCode needs Screen Recording permission (System Settings → Privacy & Security → Screen Recording → grant to ZCode Computer Use, then restart ZCode).
 Original baseline: commit `a79f462` + working tree (landed as `469d93d`).
 
