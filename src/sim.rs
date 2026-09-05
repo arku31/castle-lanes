@@ -2262,7 +2262,11 @@ impl GameSim {
             let damage = self.overtime_damage_accum[slot].floor() as i32;
             if damage > 0 {
                 self.overtime_damage_accum[slot] -= damage as f32;
-                self.castles[slot].health = (self.castles[slot].health - damage).max(0);
+                // A side's pressure lands on its first surviving castle; with
+                // one castle per side (1v1) this matches the old behavior.
+                if let Some(index) = self.side_alive_castles(team).first().copied() {
+                    self.castles[index].health = (self.castles[index].health - damage).max(0);
+                }
             }
         }
 

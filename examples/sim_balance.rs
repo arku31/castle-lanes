@@ -15,7 +15,7 @@
 
 use castle_lanes::sim::{
     BalanceConfig, BuildZone, BuildingKind, DEFAULT_BALANCE_PATH, GRID_H, GRID_W, GameSim, Lane,
-    MatchPhase, PlayerId, RaceKind, Team, UnitKind,
+    MatchPhase, PlayerId, RaceKind, Team, UnitKind, attack_multiplier,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -27,6 +27,7 @@ const ACT_EVERY_TICKS: usize = 15;
 #[derive(Clone, Copy, PartialEq)]
 enum Archetype {
     Mixed,
+    Counter,
     Aggro,
     Econ,
     Tech,
@@ -36,6 +37,7 @@ impl Archetype {
     fn parse(value: &str) -> Option<Self> {
         match value.to_ascii_lowercase().as_str() {
             "mixed" => Some(Self::Mixed),
+            "counter" => Some(Self::Counter),
             "aggro" => Some(Self::Aggro),
             "econ" => Some(Self::Econ),
             "tech" => Some(Self::Tech),
@@ -45,6 +47,7 @@ impl Archetype {
 
     fn name(self) -> &'static str {
         match self {
+            Self::Counter => "counter",
             Self::Mixed => "mixed",
             Self::Aggro => "aggro",
             Self::Econ => "econ",
@@ -55,6 +58,15 @@ impl Archetype {
 
 /// `(kind, cost, spawned_unit)` tuples read from the sim's balance.
 type BuildingOption = (BuildingKind, i32, Option<UnitKind>);
+
+/// ArmorType discriminants in a fixed order for dominant-armor scoring.
+const ARMOR_ORDER: [castle_lanes::sim::ArmorType; 5] = [
+    castle_lanes::sim::ArmorType::Normal,
+    castle_lanes::sim::ArmorType::Light,
+    castle_lanes::sim::ArmorType::Heavy,
+    castle_lanes::sim::ArmorType::Fortified,
+    castle_lanes::sim::ArmorType::Unarmored,
+];
 
 struct SideBot {
     player: PlayerId,
@@ -73,6 +85,9 @@ struct MatchOutcome {
     adjudicated: bool,
     first_castle_hit: Option<f32>,
     unit_builds: HashMap<UnitKind, u32>,
+    lane_flips: u32,
+    /// Kinds spawned within 8s before a lane flip - "what bought the flip".
+    flip_credits: HashMap<UnitKind, u32>,
 }
 
 fn main() {
@@ -117,6 +132,7 @@ fn main() {
 
     print_win_matrix(&outcomes);
     print_pacing(&outcomes);
+    print_lane_flips(&outcomes);
     print_unit_usage(&outcomes);
 }
 
@@ -133,7 +149,7 @@ impl Args {
         let mut games = 100;
         let mut max_minutes = 25.0;
         let mut seed_base = 1;
-        let mut archetype = Archetype::Mixed;
+        let mut archetype = Archetype::Counter;
         let mut balance_path = None;
         let argv: Vec<String> = env::args().collect();
         let mut idx = 1;
@@ -152,8 +168,9 @@ impl Args {
                     idx += 1;
                 }
                 "--archetype" if idx + 1 < argv.len() => {
-                    archetype = Archetype::parse(&argv[idx + 1])
-                        .unwrap_or_else(|| panic!("--archetype must be mixed|aggro|econ|tech"));
+                    archetype = Archetype::parse(&argv[idx + 1]).unwrap_or_else(|| {
+                        panic!("--archetype must be mixed|counter|aggro|econ|tech")
+                    });
                     idx += 1;
                 }
                 "--balance" if idx + 1 < argv.len() => {
@@ -197,10 +214,55 @@ fn run_match(
     let mut seen_units: HashSet<u64> = HashSet::new();
     let mut unit_builds: HashMap<UnitKind, u32> = HashMap::new();
     let mut first_castle_hit: Option<f32> = None;
+    let mut lane_leader: [i8; 2] = [0, 0];
+    let mut lane_flips = 0u32;
+    let mut flip_credits: HashMap<UnitKind, u32> = HashMap::new();
+    let mut recent_spawns: Vec<(f32, UnitKind)> = Vec::new();
+    let mut last_sample: f32 = -1.0;
     let max_ticks = (max_minutes * 60.0 / DT) as usize;
 
     for step in 0..max_ticks {
         sim.tick(DT);
+
+        // Lane dynamics: 1 Hz pressure sample per lane, a "flip" is a
+        // leadership change with a >15% margin (plan.md §6 lane-flip metric).
+        let elapsed = sim.elapsed_secs();
+        if elapsed - last_sample >= 1.0 {
+            last_sample = elapsed;
+            let mut pressure = [[0.0f32; 2]; 2];
+            for unit in &sim.units {
+                let side = sim.side_of(unit.owner).slot();
+                let lane = unit.lane as usize;
+                pressure[lane][side] += unit.health.max(0) as f32;
+            }
+            for (lane_index, sides) in pressure.iter().enumerate() {
+                let total = sides[0] + sides[1];
+                if total <= 0.0 {
+                    continue;
+                }
+                let leader = if sides[0] > sides[1] * 1.15 {
+                    1i8
+                } else if sides[1] > sides[0] * 1.15 {
+                    2i8
+                } else {
+                    0
+                };
+                if leader != 0 && leader != lane_leader[lane_index] {
+                    if lane_leader[lane_index] != 0 {
+                        lane_flips += 1;
+                        // Credit kinds spawned shortly before the flip.
+                        for (spawn_time, kind) in &recent_spawns {
+                            if elapsed - spawn_time <= 8.0 {
+                                *flip_credits.entry(*kind).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    lane_leader[lane_index] = leader;
+                }
+            }
+            recent_spawns.retain(|(spawn_time, _)| elapsed - spawn_time <= 8.0);
+        }
+
         if first_castle_hit.is_none()
             && sim
                 .castles
@@ -212,6 +274,7 @@ fn run_match(
         for unit in &sim.units {
             if seen_units.insert(unit.id) {
                 *unit_builds.entry(unit.kind).or_insert(0) += 1;
+                recent_spawns.push((sim.elapsed_secs(), unit.kind));
             }
         }
         if step % ACT_EVERY_TICKS == 0 {
@@ -247,6 +310,8 @@ fn run_match(
         adjudicated,
         first_castle_hit,
         unit_builds,
+        lane_flips,
+        flip_credits,
     }
 }
 
@@ -310,6 +375,54 @@ impl SideBot {
             let econ_count = count_owned(sim, self.team, false);
             let producer_count = count_owned(sim, self.team, true) + econ_count;
             let (choice, zone) = match self.archetype {
+                Archetype::Counter => {
+                    // Counter-aware: score producers by typed damage against
+                    // the enemy army's dominant armor, prefer splash when the
+                    // enemy board is swarmy (plan.md Phase 2 item 8).
+                    let enemy_units: Vec<&castle_lanes::sim::Unit> = sim
+                        .units
+                        .iter()
+                        .filter(|unit| {
+                            sim.side_of(unit.owner) != self.team
+                                && sim.balance.unit(unit.kind).attack_range > 0.0
+                        })
+                        .collect();
+                    let mut armor_score = [0.0f32; 5];
+                    for unit in &enemy_units {
+                        let armor = sim.balance.unit(unit.kind).armor_type;
+                        armor_score[armor as usize] += unit.health.max(0) as f32;
+                    }
+                    let dominant = armor_score
+                        .iter()
+                        .enumerate()
+                        .max_by(|a, b| a.1.total_cmp(b.1))
+                        .map(|(index, _)| index)
+                        .unwrap_or(0);
+                    let swarmy = enemy_units.len() >= 10;
+                    let best = producers
+                        .iter()
+                        .rev()
+                        .filter(|o| o.1 <= gold)
+                        .max_by(|a, b| {
+                            let score = |o: &BuildingOption| -> f32 {
+                                let config = sim.balance.unit(o.2.unwrap());
+                                let mut value =
+                                    attack_multiplier(config.attack_type, ARMOR_ORDER[dominant])
+                                        * 10.0;
+                                if swarmy
+                                    && matches!(
+                                        config.ability,
+                                        Some(castle_lanes::sim::AbilityConfig::Splash { .. })
+                                    )
+                                {
+                                    value += 8.0;
+                                }
+                                value
+                            };
+                            score(a).total_cmp(&score(b))
+                        });
+                    (best, BuildZone::Front)
+                }
                 Archetype::Mixed => {
                     if econ_count * 3 < producer_count + 1 {
                         (econ.iter().rev().find(|o| o.1 <= gold), BuildZone::Back)
@@ -458,6 +571,36 @@ fn print_pacing(outcomes: &[MatchOutcome]) {
         adjudicated,
         avg_first_hit
     );
+    println!();
+}
+
+fn print_lane_flips(outcomes: &[MatchOutcome]) {
+    let total: u32 = outcomes.iter().map(|outcome| outcome.lane_flips).sum();
+    let matches = outcomes.len().max(1);
+    let mut credits: HashMap<UnitKind, u32> = HashMap::new();
+    for outcome in outcomes {
+        for (kind, count) in &outcome.flip_credits {
+            *credits.entry(*kind).or_insert(0) += count;
+        }
+    }
+    let mut rows: Vec<(UnitKind, u32)> = credits.into_iter().collect();
+    rows.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    println!("== Lane dynamics ==");
+    println!(
+        "lane flips per match: avg {:.2} | total {} across {} matches",
+        total as f32 / matches as f32,
+        total,
+        matches
+    );
+    println!("flip credits (kinds spawned within 8s before a flip), per 100 matches:");
+    let scale = matches as f32 / 100.0;
+    for (kind, count) in rows.iter().take(8) {
+        println!(
+            "{:>22} {:>8.1}",
+            kind.fallback_name(),
+            *count as f32 / scale
+        );
+    }
     println!();
 }
 
