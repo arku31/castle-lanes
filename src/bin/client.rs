@@ -415,6 +415,7 @@ fn parse_args() -> ClientOptions {
     let mut auto_build_demo = false;
     let mut auto_race = RaceKind::Vanguard;
     let args: Vec<String> = env::args().collect();
+    let mut legacy_json = false;
     let mut idx = 1;
     while idx < args.len() {
         match args[idx].as_str() {
@@ -436,9 +437,15 @@ fn parse_args() -> ClientOptions {
                 auto_race = parse_race(&args[idx + 1]);
                 idx += 1;
             }
+            "--legacy-json" => {
+                legacy_json = true;
+            }
             _ => {}
         }
         idx += 1;
+    }
+    if legacy_json {
+        castle_lanes::net::set_outgoing_format(castle_lanes::net::PacketFormat::Json);
     }
     let server_addr = server.parse().expect("--server must be host:port");
     ClientOptions {

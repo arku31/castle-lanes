@@ -54,7 +54,13 @@ fn main() -> std::io::Result<()> {
         println!("castle_lanes_server {}", castle_lanes::VERSION);
         return Ok(());
     }
-    let mut args = all_args.into_iter();
+    let legacy_json = all_args.iter().any(|arg| arg == "--legacy-json");
+    if legacy_json {
+        castle_lanes::net::set_outgoing_format(castle_lanes::net::PacketFormat::Json);
+    }
+    let mut args = all_args
+        .into_iter()
+        .filter(|arg| arg != "--legacy-json");
     let bind_addr = args
         .next()
         .unwrap_or_else(|| DEFAULT_SERVER_ADDR.to_string());

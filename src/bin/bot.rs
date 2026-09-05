@@ -233,10 +233,15 @@ fn parse_args() -> BotOptions {
     let mut name = "Bot".to_string();
     let mut race = RaceKind::Vanguard;
     let mut building = None;
+    let mut legacy_json = false;
     let args: Vec<String> = env::args().collect();
     let mut idx = 1;
     while idx < args.len() {
         match args[idx].as_str() {
+            "--legacy-json" => {
+                castle_lanes::net::set_outgoing_format(castle_lanes::net::PacketFormat::Json);
+                legacy_json = true;
+            }
             "--server" if idx + 1 < args.len() => {
                 server = args[idx + 1].clone();
                 idx += 1;

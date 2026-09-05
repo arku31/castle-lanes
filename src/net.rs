@@ -4,10 +4,62 @@ use crate::sim::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 pub const DEFAULT_SERVER_ADDR: &str = "127.0.0.1:4000";
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 7;
 pub type GameId = u32;
+
+/// Wire format tag. Bincode is the default (5-10x smaller than JSON);
+/// `--legacy-json` switches a peer to tagged JSON for debugging/migration.
+/// Decode auto-detects: byte 0 = JSON, byte 1 = bincode; anything else is
+/// retried as untagged JSON so pre-tagging peers still decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacketFormat {
+    Json,
+    Bincode,
+}
+
+impl PacketFormat {
+    pub fn tag(self) -> u8 {
+        match self {
+            Self::Json => 0,
+            Self::Bincode => 1,
+        }
+    }
+
+    fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Json),
+            1 => Some(Self::Bincode),
+            _ => None,
+        }
+    }
+}
+
+static OUTGOING_FORMAT: AtomicU8 = AtomicU8::new(PacketFormat::Bincode as u8);
+
+/// Set the outgoing wire format; incoming is always auto-detected.
+pub fn set_outgoing_format(format: PacketFormat) {
+    OUTGOING_FORMAT.store(format as u8, Ordering::Relaxed);
+}
+
+pub fn outgoing_format() -> PacketFormat {
+    match OUTGOING_FORMAT.load(Ordering::Relaxed) {
+        0 => PacketFormat::Json,
+        _ => PacketFormat::Bincode,
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PacketError {
+    #[error("json: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("bincode: {0}")]
+    Bincode(#[from] bincode::Error),
+    #[error("unknown packet format tag")]
+    UnknownFormat,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientPacket {
@@ -392,16 +444,39 @@ pub fn apply_snapshot_delta(snapshot: &mut MatchSnapshot, delta: SnapshotDelta) 
     }
 }
 
-pub fn encode<T: Serialize>(packet: &T) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(packet)
+pub fn encode<T: Serialize>(packet: &T) -> Result<Vec<u8>, PacketError> {
+    encode_as(packet, outgoing_format())
 }
 
-pub fn decode_client(bytes: &[u8]) -> Result<ClientPacket, serde_json::Error> {
-    serde_json::from_slice(bytes)
+pub fn encode_as<T: Serialize + ?Sized>(packet: &T, format: PacketFormat) -> Result<Vec<u8>, PacketError> {
+    let payload = match format {
+        PacketFormat::Json => serde_json::to_vec(packet)?,
+        PacketFormat::Bincode => bincode::serialize(packet)?,
+    };
+    let mut tagged = Vec::with_capacity(payload.len() + 1);
+    tagged.push(format.tag());
+    tagged.extend_from_slice(&payload);
+    Ok(tagged)
 }
 
-pub fn decode_server(bytes: &[u8]) -> Result<ServerPacket, serde_json::Error> {
-    serde_json::from_slice(bytes)
+pub fn decode_client(bytes: &[u8]) -> Result<ClientPacket, PacketError> {
+    decode_any(bytes)
+}
+
+pub fn decode_server(bytes: &[u8]) -> Result<ServerPacket, PacketError> {
+    decode_any(bytes)
+}
+
+fn decode_any<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, PacketError> {
+    let (&tag, payload) = bytes.split_first().ok_or(PacketError::UnknownFormat)?;
+    match PacketFormat::from_tag(tag) {
+        Some(PacketFormat::Json) => Ok(serde_json::from_slice(payload)?),
+        Some(PacketFormat::Bincode) => Ok(bincode::deserialize(payload)?),
+        None => {
+            // Untagged buffer: legacy peer speaking raw JSON.
+            Ok(serde_json::from_slice(bytes)?)
+        }
+    }
 }
 
 fn default_castle_regen_per_second() -> f32 {
@@ -502,6 +577,55 @@ mod tests {
         sim.set_ready(left, true).unwrap();
         sim.set_ready(right, true).unwrap();
         sim
+    }
+
+    #[test]
+    fn packet_formats_round_trip_and_cross_decode() {
+        let packet = ClientPacket::PlaceBuilding {
+            player_id: PlayerId(1),
+            kind: crate::sim::BuildingKind::VanguardBarracks,
+            lane: Lane::Top,
+            zone: crate::sim::BuildZone::Front,
+            cell: crate::sim::GridCell { x: 2, y: 3 },
+            seq: Some(11),
+        };
+
+        let bincode_bytes = encode_as(&packet, PacketFormat::Bincode).unwrap();
+        let json_bytes = encode_as(&packet, PacketFormat::Json).unwrap();
+        assert_eq!(bincode_bytes[0], 1);
+        assert_eq!(json_bytes[0], 0);
+        assert!(
+            bincode_bytes.len() * 3 < json_bytes.len(),
+            "bincode ({} B) should be far smaller than json ({} B)",
+            bincode_bytes.len(),
+            json_bytes.len()
+        );
+
+        // Both formats decode through the same seam regardless of the
+        // outgoing setting.
+        let decoded_bincode: ClientPacket = decode_client(&bincode_bytes).unwrap();
+        let decoded_json: ClientPacket = decode_client(&json_bytes).unwrap();
+        assert_eq!(
+            serde_json::to_string(&decoded_bincode).unwrap(),
+            serde_json::to_string(&decoded_json).unwrap()
+        );
+
+        // Untagged raw JSON (legacy peers) still decodes.
+        let raw_json = serde_json::to_vec(&packet).unwrap();
+        let decoded_legacy: ClientPacket = decode_client(&raw_json).unwrap();
+        assert_eq!(
+            serde_json::to_string(&decoded_legacy).unwrap(),
+            serde_json::to_string(&packet).unwrap()
+        );
+
+        let snapshot = ready_two_players().snapshot();
+        let packet = ServerPacket::Snapshot(snapshot.clone());
+        let snapshot_bincode = encode_as(&packet, PacketFormat::Bincode).unwrap();
+        let decoded = match decode_server(&snapshot_bincode).unwrap() {
+            ServerPacket::Snapshot(snapshot) => snapshot,
+            other => panic!("expected snapshot packet, got {other:?}"),
+        };
+        assert_eq!(decoded, snapshot);
     }
 
     #[test]
