@@ -88,6 +88,7 @@ struct MatchOutcome {
     lane_flips: u32,
     /// Kinds spawned within 8s before a lane flip - "what bought the flip".
     flip_credits: HashMap<UnitKind, u32>,
+    upgrades_by_kind: HashMap<BuildingKind, u32>,
 }
 
 fn main() {
@@ -133,6 +134,7 @@ fn main() {
     print_win_matrix(&outcomes);
     print_pacing(&outcomes);
     print_lane_flips(&outcomes);
+    print_upgrade_usage(&outcomes);
     print_unit_usage(&outcomes);
 }
 
@@ -219,6 +221,8 @@ fn run_match(
     let mut flip_credits: HashMap<UnitKind, u32> = HashMap::new();
     let mut recent_spawns: Vec<(f32, UnitKind)> = Vec::new();
     let mut last_sample: f32 = -1.0;
+    let mut upgrades_by_kind: HashMap<BuildingKind, u32> = HashMap::new();
+    let mut counted_upgrades: HashSet<u64> = HashSet::new();
     let max_ticks = (max_minutes * 60.0 / DT) as usize;
 
     for step in 0..max_ticks {
@@ -277,6 +281,16 @@ fn run_match(
                 recent_spawns.push((sim.elapsed_secs(), unit.kind));
             }
         }
+        for building in &sim.buildings {
+            let is_upgrade = sim
+                .balance
+                .building(building.kind)
+                .upgraded_from
+                .is_some();
+            if is_upgrade && counted_upgrades.insert(building.id) {
+                *upgrades_by_kind.entry(building.kind).or_insert(0) += 1;
+            }
+        }
         if step % ACT_EVERY_TICKS == 0 {
             let occupied: Vec<(Team, Lane, BuildZone, (i32, i32))> = sim
                 .buildings
@@ -312,6 +326,130 @@ fn run_match(
         unit_builds,
         lane_flips,
         flip_credits,
+        upgrades_by_kind,
+    }
+}
+
+/// Branch upgrade pass (plan.md Phase 2 item 3 + §6): upgrade the first
+/// owned base building that has branches and is affordable. The counter
+/// archetype picks the branch whose unit best damages the enemy's dominant
+/// armor; other archetypes take the first listed branch.
+impl SideBot {
+    fn consider_upgrades(&mut self, sim: &mut GameSim) {
+        let owned: Vec<u64> = sim
+            .buildings
+            .iter()
+            .filter(|b| b.owner == self.player)
+            .map(|b| b.id)
+            .collect();
+        for building_id in owned {
+            let (kind, gold) = {
+                let building = match sim
+                    .buildings
+                    .iter()
+                    .find(|b| b.id == building_id)
+                {
+                    Some(b) => b,
+                    None => continue,
+                };
+                (building.kind, sim.economies[self.team.slot()].gold)
+            };
+            let config = sim.balance.building(kind);
+            if std::env::var("SIM_UPGRADE_DEBUG").is_ok() {
+                let sec = sim.elapsed_secs() as u64;
+                static LAST: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(u64::MAX);
+                let last = LAST.load(std::sync::atomic::Ordering::Relaxed);
+                if sec != last
+                    && LAST
+                        .compare_exchange(last, sec, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed)
+                        .is_ok()
+                {
+                    eprintln!(
+                        "DBG t={:>4}s {} upgrades={:?} gold={} branch_deltas={:?}",
+                        sec,
+                        kind.fallback_name(),
+                        config.upgrades,
+                        gold,
+                        config
+                            .upgrades
+                            .iter()
+                            .map(|branch| {
+                                sim.balance.building(*branch).cost - config.cost
+                            })
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+            if config.upgrades.is_empty() {
+                continue;
+            }
+            let enemy_units: Vec<&castle_lanes::sim::Unit> = sim
+                .units
+                .iter()
+                .filter(|unit| sim.side_of(unit.owner) != self.team)
+                .collect();
+            let mut armor_score = [0.0f32; ARMOR_ORDER.len()];
+            for unit in &enemy_units {
+                let armor = sim.balance.unit(unit.kind).armor_type;
+                armor_score[ARMOR_ORDER.iter().position(|a| a == &armor).unwrap_or(0)] +=
+                    unit.health.max(0) as f32;
+            }
+            let dominant = armor_score
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(index, _)| index)
+                .unwrap_or(0);
+
+            let base_cost = config.cost;
+            let candidates: Vec<BuildingKind> = config.upgrades.clone();
+            let scored: Vec<(BuildingKind, f32, i32)> = candidates
+                .iter()
+                .filter_map(|branch| {
+                    let branch_config = sim.balance.building(*branch);
+                    let unit = branch_config.spawned_unit?;
+                    let unit_config = sim.balance.unit(unit);
+                    let mut score = attack_multiplier(
+                        unit_config.attack_type,
+                        ARMOR_ORDER[dominant],
+                    ) * 10.0;
+                    let swarmy = enemy_units.len() >= 10;
+                    if swarmy
+                        && matches!(
+                            unit_config.ability,
+                            Some(castle_lanes::sim::AbilityConfig::Splash { .. })
+                        )
+                    {
+                        score += 8.0;
+                    }
+                    let delta = branch_config.cost - base_cost;
+                    if delta > gold {
+                        return None;
+                    }
+                    Some((*branch, score, delta))
+                })
+                .collect();
+            let chosen = match self.archetype {
+                Archetype::Counter => scored
+                    .iter()
+                    .max_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(branch, _, _)| *branch),
+                _ => scored.first().map(|(branch, _, _)| *branch),
+            };
+            if let Some(branch) = chosen {
+                let result = sim.upgrade_building(self.player, building_id, branch);
+                if std::env::var("SIM_UPGRADE_DEBUG").is_ok() {
+                    eprintln!(
+                        "DBG upgrade attempt: {:?} -> {:?} result {:?}",
+                        kind, branch, result
+                    );
+                }
+                if result.is_ok() {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -348,6 +486,29 @@ impl SideBot {
         if sim.phase != MatchPhase::Playing {
             return;
         }
+        self.consider_upgrades(sim);
+        // Reserve gold toward an affordable branch upgrade so saving happens
+        // instead of instant spending (plan.md Phase 2 item 3).
+        let upgrade_reserve: i32 = {
+            let mut cheapest = i32::MAX;
+            for building in &sim.buildings {
+                if building.owner != self.player {
+                    continue;
+                }
+                for branch in &sim.balance.building(building.kind).upgrades {
+                    let delta = sim.balance.building(*branch).cost
+                        - sim.balance.building(building.kind).cost;
+                    if delta > 0 && delta < cheapest {
+                        cheapest = delta;
+                    }
+                }
+            }
+            if cheapest == i32::MAX {
+                0
+            } else {
+                cheapest
+            }
+        };
         let slot = self.team.slot();
         let race = match sim.player(self.player).and_then(|player| player.race) {
             Some(race) => race,
@@ -374,6 +535,7 @@ impl SideBot {
             let gold = sim.economies[slot].gold;
             let econ_count = count_owned(sim, self.team, false);
             let producer_count = count_owned(sim, self.team, true) + econ_count;
+            let spendable = gold - upgrade_reserve;
             let (choice, zone) = match self.archetype {
                 Archetype::Counter => {
                     // Counter-aware: score producers by typed damage against
@@ -402,7 +564,7 @@ impl SideBot {
                     let best = producers
                         .iter()
                         .rev()
-                        .filter(|o| o.1 <= gold)
+                        .filter(|o| o.1 <= spendable)
                         .max_by(|a, b| {
                             let score = |o: &BuildingOption| -> f32 {
                                 let config = sim.balance.unit(o.2.unwrap());
@@ -425,31 +587,37 @@ impl SideBot {
                 }
                 Archetype::Mixed => {
                     if econ_count * 3 < producer_count + 1 {
-                        (econ.iter().rev().find(|o| o.1 <= gold), BuildZone::Back)
+                        (econ.iter().rev().find(|o| o.1 <= spendable), BuildZone::Back)
                     } else {
                         // Rotate through the producer roster cost-ascending so
                         // unit-usage stats exercise every building.
                         let affordable: Vec<_> =
-                            producers.iter().rev().filter(|o| o.1 <= gold).collect();
-                        let pick = affordable
-                            .get(self.producer_rotation % affordable.len().max(1))
+                            producers.iter().rev().filter(|o| o.1 <= spendable).collect();
+                        // Prefer bases that can branch-upgrade: keeps the
+                        // upgrade pipeline exercised in telemetry.
+                        let mut ordered = affordable;
+                        ordered.sort_by_key(|o| {
+                            std::cmp::Reverse(!sim.balance.building(o.0).upgrades.is_empty())
+                        });
+                        let pick = ordered
+                            .get(self.producer_rotation % ordered.len().max(1))
                             .copied();
                         (pick, BuildZone::Front)
                     }
                 }
                 Archetype::Aggro => (
-                    producers.iter().rev().find(|o| o.1 <= gold),
+                    producers.iter().rev().find(|o| o.1 <= spendable),
                     BuildZone::Front,
                 ),
                 Archetype::Tech => {
                     let cheapest = producers.iter().rev().next();
                     let expensive = producers.first();
                     let owns_enough = producer_count >= 2;
-                    if owns_enough && expensive.is_some_and(|o| o.1 <= gold) {
+                    if owns_enough && expensive.is_some_and(|o| o.1 <= spendable) {
                         (expensive, BuildZone::Front)
-                    } else if !owns_enough && cheapest.is_some_and(|o| o.1 <= gold) {
+                    } else if !owns_enough && cheapest.is_some_and(|o| o.1 <= spendable) {
                         (cheapest, BuildZone::Front)
-                    } else if expensive.is_some_and(|o| o.1 <= gold) {
+                    } else if expensive.is_some_and(|o| o.1 <= spendable) {
                         (expensive, BuildZone::Front)
                     } else {
                         (None, BuildZone::Front)
@@ -457,10 +625,10 @@ impl SideBot {
                 }
                 Archetype::Econ => {
                     if econ_count * 2 < producer_count + 1 {
-                        (econ.iter().rev().find(|o| o.1 <= gold), BuildZone::Back)
+                        (econ.iter().rev().find(|o| o.1 <= spendable), BuildZone::Back)
                     } else {
                         (
-                            producers.iter().rev().find(|o| o.1 <= gold),
+                            producers.iter().rev().find(|o| o.1 <= spendable),
                             BuildZone::Front,
                         )
                     }
@@ -599,6 +767,30 @@ fn print_lane_flips(outcomes: &[MatchOutcome]) {
             "{:>22} {:>8.1}",
             kind.fallback_name(),
             *count as f32 / scale
+        );
+    }
+    println!();
+}
+
+fn print_upgrade_usage(outcomes: &[MatchOutcome]) {
+    let mut totals: HashMap<BuildingKind, u32> = HashMap::new();
+    for outcome in outcomes {
+        for (kind, count) in &outcome.upgrades_by_kind {
+            *totals.entry(*kind).or_insert(0) += count;
+        }
+    }
+    let mut rows: Vec<(BuildingKind, u32)> = totals.into_iter().collect();
+    rows.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    println!("== Branch upgrades per 100 matches ==");
+    if rows.is_empty() {
+        println!("(none)");
+    }
+    let scale = outcomes.len().max(1) as f32 / 100.0;
+    for (kind, count) in rows {
+        println!(
+            "{:>22} {:>8.1}",
+            format!("{}/{}", kind.fallback_name(), kind.race().fallback_name()),
+            count as f32 / scale
         );
     }
     println!();

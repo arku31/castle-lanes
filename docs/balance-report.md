@@ -1,59 +1,65 @@
 # Balance Report (generated)
 
 Command: `cargo run --release --example sim_balance -- --games 25 --archetype counter > docs/balance-report.md`
-Config: `config/balance.json` (besieged regen 8s delay, regen off in sudden death;
+Config: `config/balance.json` incl. branch upgrades (besieged regen 8s, regen off in sudden death;
 sudden death 480s, ramp 1.0/min + escalation 8/min)
 
-## Findings (2026-09-05, counter-aware bots + abilities + branch units)
+## Findings (2026-09-05, upgrade-aware counter bots)
 
-- COUNTER BOTS CHANGE THE PICTURE: the earlier "Ember wins 100%" finding was a
-  bot-meta artifact. Against counter-aware bots (typed-damage scoring vs the
-  enemy's dominant armor, splash preference vs swarms), Ember's non-mirror
-  dominance collapses: Grove beats Ember 70%, Vanguard beats Ember 100% (both
-  with Ember on the right side; sample 25/pairing). Vanguard's own mirror
-  favoritism (36-60%) is within small-sample noise.
-- Lane-flip metric is live: avg ~12 flips per match, credited mostly to cheap
-  wave-core units (Guard/Sproutling/Runner) - pressure flips follow wave
-  pushes, which is exactly the counter-building dynamic the plan wants
-  measurable. Upgrade-branch units do not yet appear (bots cannot upgrade).
-- Pacing vs counter bots: p50 ~5.2 min, p90 ~10 min, 0 unfinished - slightly
-  longer than mixed bots because counter-building stabilizes lanes. Still
-  inside the 6-12 min human band.
-- Next: teach the branch upgrade to counter-bots so the 6 new buildings appear
-  in telemetry; then re-check Ember with splash-heavy boards.
+- **Branch upgrades are live in telemetry**: Ash Pack (Ember) 143/100,
+  Spitefen (Grove) 111/100, Arbalest Tower (Vanguard) 67/100, and the
+  corresponding branch units appear in unit usage.
+- **BALANCE FLAG - Vanguard branch is a trap**: with upgrades enabled,
+  Vanguard loses every decisive non-mirror matchup (0% vs Grove and Ember)
+  while Grove beats Ember 96%. The counter bots' preferred Arbalester
+  (fragile 90 HP Light sniper) appears to lose the game for whoever builds
+  it, and Spitefang (berserk) + Ash Stalker (slow diver) look very strong.
+  Next: reduce Arbalester fragility or re-price the branch, then re-run.
+  Caveat: bots are single-strategy; human play may differ - but a 0/100
+  cell is a loud signal, not noise.
+- Pacing vs counter bots: p50 ~6.4 min, p90 ~10.2 min, 0 unfinished.
+- Lane flips ~12/match, credited to cheap wave-core units.
 
 ---
 
-   Compiling castle_lanes v0.1.0 (/Volumes/Projects/cf6)
-    Finished `release` profile [optimized] target(s) in 5.38s
+    Finished `release` profile [optimized] target(s) in 0.18s
      Running `target/release/examples/sim_balance --games 25 --archetype counter`
 sim_balance: 25 games per pairing, archetype 'counter', balance: embedded default
 
 == Left-side win rate, decisive games only (rows = left race, cols = right race; '-' = no decisive games) ==
             Vanguard     Grove     Ember
-  Vanguard    48.0%   100.0%   100.0%
-     Grove        -    56.0%    80.0%
-     Ember        -        -    56.0%
+  Vanguard    40.0%     0.0%     0.0%
+     Grove        -    48.0%    96.0%
+     Ember        -        -    48.0%
 
 == Pacing ==
-matches: 150 | length p10 232s p50 298s p90 602s | adjudicated/unfinished: 0 | first castle damage avg 271s
+matches: 150 | length p10 267s p50 382s p90 612s | adjudicated/unfinished: 0 | first castle damage avg 244s
 
 == Lane dynamics ==
-lane flips per match: avg 11.42 | total 1713 across 150 matches
+lane flips per match: avg 10.65 | total 1597 across 150 matches
 flip credits (kinds spawned within 8s before a flip), per 100 matches:
-                 Guard   1044.7
-            Sproutling    630.7
-                Runner    604.7
-               Bruiser    384.7
-                Archer    266.0
-               Needler    262.0
-           Fire Lancer    194.7
+                 Guard    824.0
+            Sproutling    609.3
+           Ash Stalker    292.7
+             Spitefang    290.7
+               Needler    251.3
+           Fire Lancer    249.3
+                Runner    238.0
+               Bruiser     79.3
+
+== Branch upgrades per 100 matches ==
+        Ash Pack/Ember    142.7
+        Spitefen/Grove    110.7
+Arbalest Tower/Vanguard     66.7
 
 == Unit builds per 100 matches (lowest first) ==
-           Fire Lancer    491.3
-               Needler    802.7
-                Archer    917.3
-               Bruiser   1116.7
-                Runner   2442.0
-            Sproutling   3891.3
-                 Guard   5748.0
+                Archer     66.7
+               Bruiser    297.3
+            Arbalester    550.0
+           Fire Lancer    619.3
+                Runner    681.3
+           Ash Stalker    814.0
+               Needler    873.3
+             Spitefang   1020.0
+            Sproutling   2312.7
+                 Guard   4134.0
