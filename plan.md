@@ -5,6 +5,9 @@ Status: **Phase 0 COMPLETE** and **Phase 1 partially complete** (implemented & c
 Phase 0 (all items): determinism + `sim_balance` harness, besieged regen + sudden-death ramp (`docs/balance-report.md`), persistent/interpolated rendering, team accent colors, procedural audio, help overlay + hints + counter tooltips, lightyear removed.
 
 Phase 1 progress:
+- [x] Player-count foundations (item 3) — per-player economies/castles,
+      PlayerId ownership, side-based victory/pressure/adjudication; lobby still
+      seats 1v1, larger sizes are Phase 2 on these structures
 - [x] Server-side fog/interest management — clients only receive entities their side can see (`position_revealed_to` in sim.rs, `filter_snapshot_for_viewer` in net.rs, per-session scouted-building sets on the server)
 - [x] Reconnect grace — disconnect no longer resets a live match; 90s seat reservation with server-side expiry
 - [x] Surrender — Ctrl+Q concedes; castle falls, normal victory path
