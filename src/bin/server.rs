@@ -252,6 +252,28 @@ fn handle_packet(
             let room = room_for_player(rooms, clients, addr, player_id)?;
             room.sim.surrender(player_id)?;
         }
+        ClientPacket::SellBuilding {
+            player_id,
+            building_id,
+            seq,
+        } => {
+            let duplicate = seq.is_some()
+                && clients
+                    .get(&addr)
+                    .is_some_and(|session| session.last_applied_seq == seq);
+            if duplicate {
+                send_packet(socket, addr, &ServerPacket::Ack { seq })?;
+                return Ok(());
+            }
+            let room = room_for_player(rooms, clients, addr, player_id)?;
+            room.sim.sell_building(player_id, building_id)?;
+            if let Some(session) = clients.get_mut(&addr) {
+                session.last_applied_seq = seq;
+            }
+            if seq.is_some() {
+                send_packet(socket, addr, &ServerPacket::Ack { seq })?;
+            }
+        }
         ClientPacket::Disconnect { player_id } => {
             let session = clients
                 .get(&addr)

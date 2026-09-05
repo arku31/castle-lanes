@@ -742,6 +742,7 @@ fn menu_and_lobby_input(
     mut net: ResMut<ClientNet>,
     mut state: ResMut<SnapshotState>,
     mut help: ResMut<HelpOverlay>,
+    world_selection: Res<WorldSelection>,
 ) {
     if keys.just_pressed(KeyCode::KeyH) {
         help.open = !help.open;
@@ -808,6 +809,43 @@ fn menu_and_lobby_input(
             send_client(&net, &ClientPacket::Surrender { player_id });
         }
     }
+    if keys.just_pressed(KeyCode::Backspace) {
+        sell_selected_building(&mut net, &state, &world_selection);
+    }
+}
+
+/// Sell the selected own building for a 70% refund (Delete/Backspace).
+fn sell_selected_building(
+    net: &mut ClientNet,
+    state: &SnapshotState,
+    world_selection: &WorldSelection,
+) {
+    let (Some(snapshot), Some(player_id)) = (&state.snapshot, net.player_id) else {
+        return;
+    };
+    let Some(SelectedObject::Building(building_id)) = world_selection.selected else {
+        return;
+    };
+    let Some(building) = snapshot.buildings.iter().find(|b| b.id == building_id) else {
+        return;
+    };
+    let Some(player) = snapshot.players.iter().find(|p| p.id == player_id) else {
+        return;
+    };
+    if building.owner != player.team {
+        return;
+    }
+    let seq = net.next_seq;
+    net.next_seq = net.next_seq.wrapping_add(1);
+    net.pending_placement = None;
+    send_client(
+        net,
+        &ClientPacket::SellBuilding {
+            player_id,
+            building_id,
+            seq: Some(seq),
+        },
+    );
 }
 
 fn build_selection_input(
@@ -2362,7 +2400,7 @@ fn spawn_help_overlay(commands: &mut Commands) {
     spawn_ui_label(
         commands,
         &format!(
-            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nR rematch   Ctrl+Q concede   H help   V mute"
+            "CASTLE LANES - HOW TO PLAY            (press H to close)\n\nGOAL\nDestroy the enemy castle before they destroy yours.\n\nECONOMY\nEvery 10s you gain income plus 4% interest on banked gold.\nEconomy buildings add income. Kills pay bounty gold.\n\nBUILDING\n1-8 or the command card selects a building; left-click a\nglowing cell to place it. Top lane buildings feed the Top lane.\nFront zones build closer to the fight; Back zones are safer.\n\nCOMBAT IS AUTOMATIC - your job is to counter-build.\nPierce 130% vs Light, 70% vs Heavy.\nMagic 130% vs Heavy, 70% vs Light.\nSiege 150% vs Fortified (castles and buildings).\nNormal is neutral, 70% vs Fortified.\n\nTIPS\nCastle regen pauses while the castle is under attack.\nSudden death at 8:00 ramps up pressure until a castle falls.\n\nCONTROLS\nEnter connect/join   1-8 build   Left-click place/select\nEsc cancel/leave   Arrows/WASD pan   +/- zoom   Home reset\nDelete sell building   R rematch   Ctrl+Q concede   H help   V mute"
         ),
         Vec2::new(0.0, 0.0),
         13.0,
@@ -2961,10 +2999,18 @@ fn selected_object_details(
                 return None;
             }
             let config = balance.building(building.kind);
+            let sell_hint = if Some(building.owner) == viewer_team {
+                format!(
+                    "\nDelete: sell for {}g",
+                    (castle_lanes::sim::SELL_REFUND_RATIO * config.cost as f32).floor() as i32
+                )
+            } else {
+                String::new()
+            };
             if let Some(unit_kind) = config.spawned_unit {
                 let unit = balance.unit(unit_kind);
                 Some(format!(
-                    "{} {:?} {:?} {:?}\nHP {}/{}   Next {} in {:.1}s\nProduces: {}  HP {}\nDamage {} {}   Armor {}\nMv {:.1}   AtkR {:.1}   AS {:.2}/s",
+                    "{} {:?} {:?} {:?}\nHP {}/{}   Next {} in {:.1}s\nProduces: {}  HP {}\nDamage {} {}   Armor {}\nMv {:.1}   AtkR {:.1}   AS {:.2}/s{}",
                     config.name,
                     building.owner,
                     building.lane,
@@ -2981,6 +3027,7 @@ fn selected_object_details(
                     unit.speed,
                     unit.attack_range,
                     attacks_per_second(unit.attack_interval),
+                    sell_hint,
                 ))
             } else {
                 Some(format!(

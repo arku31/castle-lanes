@@ -48,6 +48,12 @@ pub enum ClientPacket {
     Surrender {
         player_id: PlayerId,
     },
+    SellBuilding {
+        player_id: PlayerId,
+        building_id: u64,
+        #[serde(default)]
+        seq: Option<u32>,
+    },
     Disconnect {
         player_id: PlayerId,
     },

@@ -26,6 +26,7 @@ const UNIT_SEPARATION_PADDING: f32 = 0.08;
 const SPAWN_SEARCH_RINGS: i32 = 8;
 const BUILDING_FOOTPRINT_RADIUS: f32 = 4.6;
 const CASTLE_FOOTPRINT_RADIUS: f32 = 5.0;
+pub const SELL_REFUND_RATIO: f32 = 0.7;
 // Vision radii in sim units; the authoritative server filters snapshots with
 // these so clients only receive entities their side can actually see.
 pub const VISION_CASTLE_RADIUS: f32 = 18.0;
@@ -1107,6 +1108,46 @@ impl GameSim {
 
     pub fn reset_to_lobby(&mut self) {
         self.reset_to_lobby_inner();
+    }
+
+    /// Sell one of the player's buildings for a 70% refund (plan.md Phase 1
+    /// item 5). Selling exists so a bad read stays recoverable: counter-
+    /// building remains a live option instead of a lost cause.
+    pub fn sell_building(&mut self, player_id: PlayerId, building_id: u64) -> Result<(), String> {
+        if self.phase != MatchPhase::Playing {
+            return Err("Buildings can only be sold during a match.".to_string());
+        }
+        let team = self
+            .players
+            .iter()
+            .find(|p| p.id == player_id)
+            .map(|p| p.team)
+            .ok_or_else(|| "Unknown player.".to_string())?;
+        let index = self
+            .buildings
+            .iter()
+            .position(|b| b.id == building_id)
+            .ok_or_else(|| "That building no longer exists.".to_string())?;
+        if self.buildings[index].owner != team {
+            return Err("You can only sell your own buildings.".to_string());
+        }
+        let kind = self.buildings[index].kind;
+        let refund = self.sell_refund(kind);
+        let income_bonus = self.balance.building(kind).income_bonus;
+        self.buildings.remove(index);
+        self.economies[team.slot()].gold += refund;
+        if income_bonus > 0 {
+            self.economies[team.slot()].income -= income_bonus;
+        }
+        self.message = format!(
+            "{team:?} sold {} for {refund}g.",
+            self.balance.building(kind).name
+        );
+        Ok(())
+    }
+
+    pub fn sell_refund(&self, kind: BuildingKind) -> i32 {
+        (self.balance.building(kind).cost as f32 * SELL_REFUND_RATIO).floor() as i32
     }
 
     /// Concede the match: the surrendering player's castle falls immediately
@@ -2600,6 +2641,35 @@ mod tests {
         assert!(sim.players.iter().all(|player| player.connected));
         assert_eq!(sim.phase, MatchPhase::Playing);
         assert!(!sim.waiting_for_reconnect());
+    }
+
+    #[test]
+    fn selling_refunds_70_percent_and_removes_income_bonus() {
+        let mut sim = ready_two_players();
+        let player = sim.players[0].id;
+        place_test_building(
+            &mut sim,
+            player,
+            BuildingKind::VanguardForge,
+            GridCell { x: 1, y: 1 },
+        )
+        .unwrap();
+        let cost = sim.balance.building(BuildingKind::VanguardForge).cost;
+        let income_before = sim.economies[0].income;
+        let gold_before = sim.economies[0].gold;
+        let building_id = sim.buildings[0].id;
+
+        sim.sell_building(player, building_id).unwrap();
+
+        assert!(sim.buildings.is_empty());
+        assert_eq!(sim.economies[0].income, income_before - 5);
+        assert_eq!(
+            sim.economies[0].gold,
+            gold_before + (cost as f32 * 0.7).floor() as i32
+        );
+
+        let other = sim.players[1].id;
+        assert!(sim.sell_building(other, 9999).is_err());
     }
 
     #[test]

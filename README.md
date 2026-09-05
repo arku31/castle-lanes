@@ -48,6 +48,7 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `Home`: reset the camera.
 - `R`: vote for rematch after game over.
 - `Ctrl+Q`: concede the match (your castle falls; the opponent wins).
+- `Delete`: sell the selected own building for a 70% refund.
 - `H`: open or close the in-game help/rules overlay.
 - `V`: mute or unmute all sound (persisted to `config/client_settings.json`).
 - `--race vanguard|grove|ember`: client/bot flag for demo/test race selection.
