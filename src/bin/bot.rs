@@ -34,7 +34,8 @@ fn main() -> std::io::Result<()> {
     let mut last_keepalive = Instant::now();
     let mut sent_race = false;
     let mut sent_ready = false;
-    let mut sent_building = false;
+    let mut builds_placed: usize = 0;
+    let mut last_build = Instant::now();
     let mut sent_rematch = false;
     let mut last_phase = None;
     let mut snapshot = None;
@@ -135,7 +136,6 @@ fn main() -> std::io::Result<()> {
             if previous_phase == Some(MatchPhase::GameOver) && snapshot.phase == MatchPhase::Lobby {
                 sent_race = false;
                 sent_ready = false;
-                sent_building = false;
                 sent_rematch = false;
             }
             if !sent_race {
@@ -159,24 +159,52 @@ fn main() -> std::io::Result<()> {
                 send_ready(&socket, options.server_addr, id);
                 sent_ready = true;
             }
-            if snapshot.phase == MatchPhase::Playing && !sent_building {
+            if snapshot.phase == MatchPhase::Playing
+                && last_build.elapsed() >= Duration::from_secs(4)
+            {
+                // Keep building like a player would: rotate lanes and cells
+                // whenever this side can afford the configured producer.
                 let Some(player) = snapshot.players.iter().find(|player| player.id == id) else {
                     continue;
                 };
-                send(
-                    &socket,
-                    options.server_addr,
-                    &ClientPacket::PlaceBuilding {
-                        player_id: id,
-                        kind: options.building,
-                        lane: default_lane_for_team(player.team),
-                        zone: BuildZone::Front,
-                        cell: GridCell { x: 0, y: 0 },
-                        seq: None,
-                    },
-                );
-                sent_building = true;
-                println!("Placed {}", options.building.fallback_name());
+                let slot = match player.team {
+                    castle_lanes::sim::Team::Left => 0,
+                    castle_lanes::sim::Team::Right => 1,
+                };
+                let gold = snapshot.economies[slot].gold;
+                let cost = castle_lanes::sim::BalanceConfig::default()
+                    .building(options.building)
+                    .cost;
+                if gold >= cost {
+                    let build_count = builds_placed;
+                    let lane = if build_count % 2 == 0 {
+                        default_lane_for_team(player.team)
+                    } else {
+                        match default_lane_for_team(player.team) {
+                            Lane::Top => Lane::Bottom,
+                            Lane::Bottom => Lane::Top,
+                        }
+                    };
+                    let cell = GridCell {
+                        x: (build_count / 2) as i32 % 10,
+                        y: ((build_count / 2) as i32 / 10) % 5,
+                    };
+                    send(
+                        &socket,
+                        options.server_addr,
+                        &ClientPacket::PlaceBuilding {
+                            player_id: id,
+                            kind: options.building,
+                            lane,
+                            zone: BuildZone::Front,
+                            cell,
+                            seq: None,
+                        },
+                    );
+                    builds_placed += 1;
+                    last_build = Instant::now();
+                    println!("Placed {}", options.building.fallback_name());
+                }
             }
             if snapshot.phase == MatchPhase::GameOver && !sent_rematch {
                 send(

@@ -759,5 +759,6 @@
       "speed": 2.6,
       "attack_interval": 3.0
     }
-  ]
+  ],
+  "sudden_death_escalation_per_minute": 8.0
 }

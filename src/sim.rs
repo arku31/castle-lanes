@@ -14,7 +14,8 @@ pub const LANE_LENGTH: f32 = 100.0;
 pub const SUDDEN_DEATH_START: f32 = 600.0;
 pub const CASTLE_REGEN_PER_SECOND: f32 = 10.0;
 pub const CASTLE_REGEN_DELAY_SECS: f32 = 8.0;
-pub const SUDDEN_DEATH_RAMP_PER_MINUTE: f32 = 0.5;
+pub const SUDDEN_DEATH_RAMP_PER_MINUTE: f32 = 1.0;
+pub const SUDDEN_DEATH_ESCALATION_PER_MINUTE: f32 = 8.0;
 pub const DEFAULT_BALANCE_PATH: &str = "config/balance.json";
 const BOUNTY_EVENT_TTL: f32 = 0.75;
 const CASTLE_JUNCTION_RANGE: f32 = 18.0;
@@ -622,6 +623,8 @@ pub struct BalanceConfig {
     pub castle_regen_delay_secs: f32,
     #[serde(default = "default_sudden_death_ramp_per_minute")]
     pub sudden_death_ramp_per_minute: f32,
+    #[serde(default = "default_sudden_death_escalation_per_minute")]
+    pub sudden_death_escalation_per_minute: f32,
     pub sudden_death_start: f32,
     pub races: Vec<RaceConfig>,
     pub buildings: Vec<BuildingConfig>,
@@ -755,6 +758,10 @@ fn default_castle_regen_delay_secs() -> f32 {
 
 fn default_sudden_death_ramp_per_minute() -> f32 {
     SUDDEN_DEATH_RAMP_PER_MINUTE
+}
+
+fn default_sudden_death_escalation_per_minute() -> f32 {
+    SUDDEN_DEATH_ESCALATION_PER_MINUTE
 }
 
 fn default_bounty() -> i32 {
@@ -1605,6 +1612,7 @@ impl GameSim {
             let besieged = self.castle_regen_delay_timer[idx] > 0.0;
             if regen_per_second > 0.0
                 && !besieged
+                && !self.sudden_death()
                 && self.castles[idx].health < self.castles[idx].max_health
             {
                 self.castle_regen_accum[idx] += regen_per_second * dt;
@@ -1727,17 +1735,20 @@ impl GameSim {
             return;
         }
 
-        // Pressure ramps up the longer sudden death runs so stalemates still
-        // resolve instead of both castles grinding down at a fixed 40 dps.
+        // Pressure ramps up the longer sudden death runs - both through a
+        // multiplier on board pressure and a flat escalation - so even a
+        // near-empty board resolves instead of stalling forever.
         let ramp = self.balance.sudden_death_ramp_per_minute.max(0.0);
+        let escalation = self.balance.sudden_death_escalation_per_minute.max(0.0);
         let minutes_into_sudden_death =
             ((self.elapsed_secs - self.balance.sudden_death_start) / 60.0).max(0.0);
         let pressure_scale = 1.0 + ramp * minutes_into_sudden_death;
+        let flat_damage = escalation * minutes_into_sudden_death;
 
         for team in [Team::Left, Team::Right] {
             let pressure = self.board_pressure(team.opponent());
             let slot = team.slot();
-            self.overtime_damage_accum[slot] += pressure * pressure_scale * dt;
+            self.overtime_damage_accum[slot] += (pressure * pressure_scale + flat_damage) * dt;
             let damage = self.overtime_damage_accum[slot].floor() as i32;
             if damage > 0 {
                 self.overtime_damage_accum[slot] -= damage as f32;

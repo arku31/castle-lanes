@@ -1,6 +1,22 @@
 # Castle Lanes — Path to a Really Good Game
 
-Status: **Phase 0 COMPLETE** (implemented & committed 2026-09-05). All P0 items landed: determinism + `sim_balance` harness, besieged regen + sudden-death ramp (`docs/balance-report.md`), persistent/interpolated rendering, team accent colors, procedural audio, help overlay + hints + counter tooltips, lightyear removed. Next up: **Phase 1** (server-side fog, reconnect grace, sim de-hardcoding for team play, binary encoding, sell/refund, surrender, match recording, CI).
+Status: **Phase 0 COMPLETE** and **Phase 1 partially complete** (implemented & committed 2026-09-05).
+
+Phase 0 (all items): determinism + `sim_balance` harness, besieged regen + sudden-death ramp (`docs/balance-report.md`), persistent/interpolated rendering, team accent colors, procedural audio, help overlay + hints + counter tooltips, lightyear removed.
+
+Phase 1 progress:
+- [x] Server-side fog/interest management — clients only receive entities their side can see (`position_revealed_to` in sim.rs, `filter_snapshot_for_viewer` in net.rs, per-session scouted-building sets on the server)
+- [x] Reconnect grace — disconnect no longer resets a live match; 90s seat reservation with server-side expiry
+- [x] Surrender — Ctrl+Q concedes; castle falls, normal victory path
+- [x] Command acks — placements carry a seq, retried 350ms/1.5s, server dedupes at-most-once
+- [ ] Binary encoding (item 4)
+- [ ] Sell/refund + building move (item 5)
+- [ ] Client module refactor (item 8)
+- [ ] CI (item 9)
+- [ ] Settings panel (item 10)
+- [ ] Match recording (item 7)
+
+Screenshots for the README remain blocked: ZCode needs Screen Recording permission (System Settings → Privacy & Security → Screen Recording → grant to ZCode Computer Use, then restart ZCode).
 Original baseline: commit `a79f462` + working tree (landed as `469d93d`).
 
 ---
