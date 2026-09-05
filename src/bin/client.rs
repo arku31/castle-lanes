@@ -234,7 +234,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Castle Lanes MVP".to_string(),
+                title: format!("Castle Lanes v{}", castle_lanes::VERSION),
                 resolution: WindowResolution::new(1100, 720),
                 resizable: true,
                 ..default()

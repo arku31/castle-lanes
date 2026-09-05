@@ -35,6 +35,10 @@ struct GameRoom {
 
 fn main() -> std::io::Result<()> {
     let mut args = env::args().skip(1);
+    if args.next().as_deref() == Some("--version") {
+        println!("castle_lanes_server {}", castle_lanes::VERSION);
+        return Ok(());
+    }
     let bind_addr = args
         .next()
         .unwrap_or_else(|| DEFAULT_SERVER_ADDR.to_string());
@@ -43,7 +47,10 @@ fn main() -> std::io::Result<()> {
         .unwrap_or_else(|| DEFAULT_BALANCE_PATH.to_string());
     let socket = UdpSocket::bind(&bind_addr)?;
     socket.set_nonblocking(true)?;
-    println!("Castle Lanes server listening on {bind_addr}");
+    println!(
+        "Castle Lanes server v{} listening on {bind_addr}",
+        castle_lanes::VERSION
+    );
 
     let balance = BalanceConfig::load_or_default(&balance_path);
     println!("Loaded balance config from {balance_path}");

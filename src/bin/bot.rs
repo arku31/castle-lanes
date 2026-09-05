@@ -12,6 +12,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 fn main() -> std::io::Result<()> {
+    let mut argv = env::args().skip(1);
+    if argv.next().as_deref() == Some("--version") {
+        println!("castle_lanes_bot {}", castle_lanes::VERSION);
+        return Ok(());
+    }
     let options = parse_args();
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_nonblocking(true)?;
