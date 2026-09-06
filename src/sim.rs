@@ -1039,6 +1039,11 @@ pub struct PlayerInfo {
     pub ready: bool,
     pub connected: bool,
     pub rematch_vote: bool,
+    /// Career W/L from the server's profile store (plan.md Phase 3).
+    #[serde(default)]
+    pub wins: u32,
+    #[serde(default)]
+    pub losses: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1216,6 +1221,14 @@ impl GameSim {
         Ok(())
     }
 
+    /// Set a player's career W/L for scoreboard display.
+    pub fn set_player_record(&mut self, name: &str, wins: u32, losses: u32) {
+        if let Some(player) = self.players.iter_mut().find(|p| p.name == name) {
+            player.wins = wins;
+            player.losses = losses;
+        }
+    }
+
     pub fn player_index(&self, player_id: PlayerId) -> Option<usize> {
         self.players
             .iter()
@@ -1334,6 +1347,8 @@ impl GameSim {
             ready: false,
             connected: true,
             rematch_vote: false,
+            wins: 0,
+            losses: 0,
         };
         self.message = format!("{} joined as {:?}.", player.name, player.team);
         // Per-player state grows with the seat (plan.md Phase 1 item 3).

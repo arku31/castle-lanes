@@ -293,7 +293,7 @@ fn handle_packet(
                 clients: HashSet::new(),
                 recorder: MatchRecorder::new(game_id),
             };
-            join_room(socket, clients, addr, &mut room, balance, false)?;
+            join_room(socket, clients, addr, &mut room, balance, profiles, false)?;
             rooms.insert(game_id, room);
             broadcast_game_lists(socket, rooms, clients);
         }
@@ -304,7 +304,7 @@ fn handle_packet(
             let room = rooms
                 .get_mut(&game_id)
                 .ok_or_else(|| "That game no longer exists.".to_string())?;
-            join_room(socket, clients, addr, room, balance, spectator)?;
+            join_room(socket, clients, addr, room, balance, profiles, spectator)?;
             broadcast_game_lists(socket, rooms, clients);
         }
         ClientPacket::LeaveGame => {
@@ -589,6 +589,7 @@ fn join_room(
     addr: SocketAddr,
     room: &mut GameRoom,
     balance: &BalanceConfig,
+    profiles: &ProfileStore,
     spectator: bool,
 ) -> Result<(), String> {
     let session = clients
@@ -616,6 +617,8 @@ fn join_room(
                     ready: false,
                     connected: true,
                     rematch_vote: false,
+                    wins: 0,
+                    losses: 0,
                 },
             },
         )?;
@@ -623,6 +626,11 @@ fn join_room(
         return Ok(());
     }
     let player = room.sim.join_or_update_player(session.name.clone())?;
+    // Populate career W/L from the profile store
+    if let Some(profile) = profiles.get(session.name.as_str()) {
+        room.sim
+            .set_player_record(session.name.as_str(), profile.wins, profile.losses);
+    }
     room.clients.insert(addr);
     session.game_id = Some(room.id);
     session.player_id = Some(player.id);
