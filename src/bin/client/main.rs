@@ -42,17 +42,76 @@ const MAP_H: f32 = 560.0;
 
 const CELL: f32 = 38.0;
 
-const UI_PANEL_TOP_Y: f32 = -205.0;
-
-const UI_PANEL_Y: f32 = -322.0;
-
-const TOP_BAR_Y: f32 = 412.0;
-
-const COMMAND_GRID_ORIGIN: Vec2 = Vec2::new(350.0, UI_PANEL_Y + 60.0);
-
-const MINIMAP_CENTER: Vec2 = Vec2::new(-520.0, UI_PANEL_Y + 5.0);
-
 const MINIMAP_SIZE: Vec2 = Vec2::new(230.0, 165.0);
+
+/// Half-extents of the window in UI units (logical pixels). UI elements are
+/// positioned relative to the screen center by `pin_ui_to_camera`, so every
+/// edge-anchored cluster (top bar, bottom console, minimap, command card)
+/// derives its offset from this instead of constants sized for one resolution.
+#[derive(Resource, Clone, Copy)]
+struct UiLayout {
+    half: Vec2,
+}
+
+impl Default for UiLayout {
+    fn default() -> Self {
+        Self {
+            half: Vec2::new(800.0, 450.0),
+        }
+    }
+}
+
+impl UiLayout {
+    fn from_window(window: &Window) -> Self {
+        Self {
+            half: Vec2::new(window.width() * 0.5, window.height() * 0.5),
+        }
+    }
+
+    /// Center Y of the top bar panel.
+    fn top_bar_y(&self) -> f32 {
+        self.half.y - 38.0
+    }
+
+    /// Center Y of the hint strip tucked under the top edge.
+    fn hint_y(&self) -> f32 {
+        self.half.y - 12.0
+    }
+
+    /// Center Y of the bottom console panel.
+    fn panel_y(&self) -> f32 {
+        -(self.half.y - 128.0)
+    }
+
+    /// Clicks with screen Y above this hit the world, not the console.
+    fn panel_top_y(&self) -> f32 {
+        self.panel_y() + 117.0
+    }
+
+    /// Half width of the top bar / bottom console; clamps on narrow windows.
+    fn bar_half_width(&self) -> f32 {
+        524.0_f32.min(self.half.x - 12.0)
+    }
+
+    /// Center of the first command card button; the grid grows right/down.
+    fn command_grid_origin(&self) -> Vec2 {
+        Vec2::new(self.half.x - 450.0, self.panel_y() + 60.0)
+    }
+
+    /// Center of the minimap panel in the bottom-left corner.
+    fn minimap_center(&self) -> Vec2 {
+        Vec2::new(-(self.half.x - 280.0), self.panel_y() + 5.0)
+    }
+}
+
+fn update_ui_layout(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut layout: ResMut<UiLayout>,
+) {
+    if let Ok(window) = windows.single() {
+        *layout = UiLayout::from_window(window);
+    }
+}
 
 const REVEAL_CASTLE_RADIUS: f32 = 430.0;
 
@@ -287,10 +346,12 @@ fn run_replay(path: std::path::PathBuf) {
         .init_resource::<MatchHints>()
         .insert_resource(client_net)
         .insert_resource(player)
+        .init_resource::<UiLayout>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
+                update_ui_layout,
                 replay_advance,
                 replay_input,
                 camera_controls,
@@ -305,7 +366,8 @@ fn run_replay(path: std::path::PathBuf) {
                 pin_ui_to_camera,
                 animate_grass,
                 update_combat_vfx,
-            ),
+            )
+                .chain(),
         )
         .run();
 }
@@ -787,41 +849,50 @@ fn main() {
         })
         .init_resource::<SceneRegistry>()
         .init_resource::<SfxQueue>()
-        .init_resource::<UiOverlays>()
+        .insert_resource(UiOverlays {
+            help: options.show_help,
+            settings: options.show_settings,
+        })
         .init_resource::<MatchHints>()
         .insert_resource(ClientSettings::load())
+        .init_resource::<UiLayout>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
+                update_ui_layout,
                 (
-                    receive_packets,
-                    demo_automation,
-                    menu_and_lobby_input,
-                    build_selection_input,
-                    ui_mouse_input,
-                    placement_input,
-                    camera_controls,
-                    detect_combat_vfx,
-                    update_build_hover,
-                    update_world_hover,
-                    update_fog_memory,
-                ),
-                (
-                    play_sfx_queue,
-                    volume_toggle_input,
-                    announce_phase_sfx,
-                    sync_static_scene,
-                    sync_units,
-                    animate_units,
-                    update_object_highlight,
-                    update_fog_tiles,
-                    update_placement_preview,
-                    redraw_game_ui,
-                    pin_ui_to_camera,
-                    animate_grass,
-                    update_combat_vfx,
-                ),
+                    (
+                        receive_packets,
+                        demo_automation,
+                        menu_and_lobby_input,
+                        build_selection_input,
+                        ui_mouse_input,
+                        placement_input,
+                        camera_controls,
+                        detect_combat_vfx,
+                        update_build_hover,
+                        update_world_hover,
+                        update_fog_memory,
+                    ),
+                    (
+                        play_sfx_queue,
+                        volume_toggle_input,
+                        announce_phase_sfx,
+                        sync_static_scene,
+                        sync_units,
+                        animate_units,
+                        update_object_highlight,
+                        update_fog_tiles,
+                        update_placement_preview,
+                        redraw_game_ui,
+                        pin_ui_to_camera,
+                        animate_grass,
+                        update_combat_vfx,
+                    )
+                        .chain(),
+                )
+                    .chain(),
             )
                 .chain(),
         )
@@ -838,6 +909,10 @@ struct ClientOptions {
     /// 1 = right home) instead of the own base; capture/spectate aid.
     camera_x: Option<f32>,
     replay: Option<std::path::PathBuf>,
+    /// Open with the help overlay visible (capture/demo aid).
+    show_help: bool,
+    /// Open with the settings overlay visible (capture/demo aid).
+    show_settings: bool,
 }
 
 fn parse_args() -> ClientOptions {
@@ -848,6 +923,8 @@ fn parse_args() -> ClientOptions {
     let mut auto_race = RaceKind::Vanguard;
     let mut camera_x = None;
     let mut replay = None;
+    let mut show_help = false;
+    let mut show_settings = false;
     let args: Vec<String> = env::args().collect();
     let mut legacy_json = false;
     let mut idx = 1;
@@ -874,6 +951,12 @@ fn parse_args() -> ClientOptions {
             "--legacy-json" => {
                 legacy_json = true;
             }
+            "--show-help" => {
+                show_help = true;
+            }
+            "--show-settings" => {
+                show_settings = true;
+            }
             _ => {}
         }
         idx += 1;
@@ -890,6 +973,8 @@ fn parse_args() -> ClientOptions {
         auto_race,
         camera_x,
         replay,
+        show_help,
+        show_settings,
     }
 }
 

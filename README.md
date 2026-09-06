@@ -6,6 +6,16 @@ Castle Lanes is a native desktop Rust/Bevy MVP inspired by the builder-autobattl
 
 ![Vanguard defenders marching out to meet the Ember push](docs/screenshots/battle_armies.png)
 
+More views — the HUD, lobby, and overlays all fit a 1600×900 window without scrolling:
+
+| Siege push reaching the castle | Server lobby browser |
+| --- | --- |
+| ![Ember push reaching the Vanguard castle](docs/screenshots/siege.png) | ![Game lobby browser listing open games](docs/screenshots/lobby.png) |
+
+| Help overlay (H) | Settings overlay (O) |
+| --- | --- |
+| ![Help overlay with rules and controls](docs/screenshots/help.png) | ![Settings overlay with volume and resolution](docs/screenshots/settings.png) |
+
 ## Run
 
 With [Task](https://taskfile.dev/), common commands are available through `Taskfile.yml`:
@@ -60,6 +70,7 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `--race vanguard|grove|ember`: client/bot flag for demo/test race selection.
 - `--auto-ready`: client flag for demo/test runs that readies after joining.
 - `--auto-build-demo`: client flag for demo/test runs that places your first race building after match start.
+- `--show-help` / `--show-settings`: client flags that open with the corresponding overlay visible (capture/demo aid).
 
 Players must choose a race before readying. The server rejects ready commands until a race is selected.
 

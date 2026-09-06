@@ -18,12 +18,12 @@ pub(crate) fn redraw_game_ui(
     selection: Res<BuildSelection>,
     hover: Res<BuildHover>,
     world_selection: Res<WorldSelection>,
-    _world_hover: Res<WorldHover>,
     building_icons: Res<BuildingIconAssets>,
     overlays: Res<UiOverlays>,
     mut hints: ResMut<MatchHints>,
     settings: Res<ClientSettings>,
     fonts: Res<FontAssets>,
+    layout: Res<UiLayout>,
 ) {
     for entity in &ui_query {
         commands.entity(entity).despawn();
@@ -33,20 +33,27 @@ pub(crate) fn redraw_game_ui(
     let (phase_line, _economy_line, _message_line) = ui_summary(&state, &net);
     let selected_race = selected_race(&state, &net);
     let race_popup_open = race_selection_popup_open(&state, &net);
-    spawn_top_hud(&mut commands, &state, &net, &balance, &phase_line);
+    spawn_top_hud(&mut commands, &state, &net, &balance, &phase_line, &layout);
     if let Some(snapshot) = &state.snapshot {
         if snapshot.phase == MatchPhase::Playing || snapshot.phase == MatchPhase::GameOver {
-            spawn_team_scoreboard(&mut commands, snapshot, &balance);
+            spawn_team_scoreboard(&mut commands, snapshot, &balance, &layout);
         }
     }
 
     if state.snapshot.is_none() {
-        spawn_bottom_console(&mut commands);
+        spawn_bottom_console(&mut commands, &layout);
         spawn_lobby_browser(&mut commands, &state, &net);
+        // Overlays stay reachable before joining anything (H / O work here too).
+        if overlays.help {
+            spawn_help_overlay(&mut commands, &fonts);
+        }
+        if overlays.settings {
+            spawn_settings_overlay(&mut commands, &settings, &fonts);
+        }
         return;
     }
 
-    spawn_bottom_console(&mut commands);
+    spawn_bottom_console(&mut commands, &layout);
 
     if let Some(snapshot) = &state.snapshot {
         spawn_minimap(
@@ -56,6 +63,7 @@ pub(crate) fn redraw_game_ui(
             net.team,
             camera_query.single().ok(),
             windows.single().ok(),
+            &layout,
         );
     }
 
@@ -70,6 +78,7 @@ pub(crate) fn redraw_game_ui(
         selected_details.as_deref(),
         race_popup_open,
         world_selection.selected.is_some() || selection.kind.is_some(),
+        &layout,
     );
 
     if !race_popup_open {
@@ -83,12 +92,13 @@ pub(crate) fn redraw_game_ui(
                 race,
                 selection.kind,
                 hover.kind,
+                &layout,
             );
         }
     }
     if !race_popup_open {
         if let Some(kind) = hover.kind {
-            spawn_build_tooltip(&mut commands, &balance, kind);
+            spawn_build_tooltip(&mut commands, &balance, kind, &layout);
         }
     }
 
@@ -167,7 +177,7 @@ pub(crate) fn redraw_game_ui(
     }
 
     if race_popup_open {
-        spawn_race_selection_popup(&mut commands, &balance, selected_race);
+        spawn_race_selection_popup(&mut commands, &balance, selected_race, &layout);
     }
 
     if overlays.help {
@@ -180,8 +190,8 @@ pub(crate) fn redraw_game_ui(
         if let Some(snapshot) = &state.snapshot {
             let horizon = state.balance.sudden_death_start.max(1.0);
             let fraction = (snapshot.elapsed_secs / horizon).clamp(0.0, 1.0);
-            spawn_replay_progress_bar(&mut commands, fraction);
-            let bar_y = TOP_BAR_Y - 8.0;
+            spawn_replay_progress_bar(&mut commands, fraction, &layout);
+            let bar_y = layout.top_bar_y() - 8.0;
             let elapsed = format_match_time(snapshot.elapsed_secs);
             spawn_ui_label(
                 &mut commands,
@@ -195,7 +205,7 @@ pub(crate) fn redraw_game_ui(
             );
         }
     }
-    spawn_match_hint(&mut commands, &state, &net, &mut hints);
+    spawn_match_hint(&mut commands, &state, &net, &mut hints, &layout);
 }
 
 /// Settings panel: volume, mute, fullscreen, resolution - all persisted to
@@ -253,6 +263,7 @@ pub(crate) fn spawn_match_hint(
     state: &SnapshotState,
     net: &ClientNet,
     hints: &mut MatchHints,
+    layout: &UiLayout,
 ) {
     let hint = match (&state.snapshot, net.team) {
         (None, _) => Some("Press Enter to connect, then create or join a game."),
@@ -298,7 +309,7 @@ pub(crate) fn spawn_match_hint(
     };
     spawn_ui_rect(
         commands,
-        Vec2::new(0.0, TOP_BAR_Y + 26.0),
+        Vec2::new(0.0, layout.hint_y()),
         Vec2::new(560.0, 22.0),
         Color::srgba(0.05, 0.045, 0.03, 0.88),
         48.0,
@@ -306,7 +317,7 @@ pub(crate) fn spawn_match_hint(
     spawn_ui_label(
         commands,
         &format!("HINT: {hint}"),
-        Vec2::new(0.0, TOP_BAR_Y + 26.0),
+        Vec2::new(0.0, layout.hint_y()),
         12.0,
         TEXT_GOLD,
         49.0,
@@ -351,12 +362,15 @@ fn spawn_team_scoreboard(
     commands: &mut Commands,
     snapshot: &MatchSnapshot,
     balance: &BalanceConfig,
+    layout: &UiLayout,
 ) {
     if snapshot.players.len() <= 2 {
         return;
     }
-    let panel_y = TOP_BAR_Y + 28.0;
     let panel_h = 20.0 * snapshot.players.len() as f32 + 20.0;
+    // Hang from the hint strip downward so the panel never crosses the top edge.
+    let panel_top = layout.hint_y() - 14.0;
+    let panel_y = panel_top - panel_h * 0.5;
     spawn_ui_rect(
         commands,
         Vec2::new(0.0, panel_y),
@@ -372,7 +386,7 @@ fn spawn_team_scoreboard(
         43.0,
     );
 
-    let mut y_offset = panel_y - 8.0;
+    let mut y_offset = panel_top - 12.0;
     // Sort: Left players first, then Right players
     let mut sorted: Vec<&_> = snapshot.players.iter().collect();
     sorted.sort_by_key(|p| if p.team == Team::Left { 0 } else { 1 });
@@ -441,11 +455,13 @@ pub(crate) fn spawn_top_hud(
     net: &ClientNet,
     balance: &BalanceConfig,
     phase_line: &str,
+    layout: &UiLayout,
 ) {
+    let bar_half = layout.bar_half_width();
     spawn_ui_panel(
         commands,
-        Vec2::new(0.0, TOP_BAR_Y + 5.0),
-        Vec2::new(1048.0, 36.0),
+        Vec2::new(0.0, layout.top_bar_y() + 5.0),
+        Vec2::new(bar_half * 2.0, 36.0),
         40.0,
     );
     let race = selected_race(state, net);
@@ -457,10 +473,11 @@ pub(crate) fn spawn_top_hud(
     let left_label = race
         .map(|race| format!("{}  {}{}", balance.race(race).name, net.player_name, wl))
         .unwrap_or_else(|| format!("Commander  {}{}", net.player_name, wl));
+    let label_left_x = -bar_half + 22.0;
     spawn_ui_label(
         commands,
         &left_label,
-        Vec2::new(-502.0, TOP_BAR_Y + 10.0),
+        Vec2::new(label_left_x, layout.top_bar_y() + 10.0),
         13.0,
         TEXT_PARCHMENT,
         45.0,
@@ -470,7 +487,7 @@ pub(crate) fn spawn_top_hud(
     spawn_ui_label(
         commands,
         phase_line,
-        Vec2::new(0.0, TOP_BAR_Y + 10.0),
+        Vec2::new(0.0, layout.top_bar_y() + 10.0),
         14.0,
         TEXT_GOLD,
         45.0,
@@ -485,7 +502,7 @@ pub(crate) fn spawn_top_hud(
         spawn_ui_label(
             commands,
             "SPECTATOR",
-            Vec2::new(-502.0, TOP_BAR_Y + 24.0),
+            Vec2::new(label_left_x, layout.top_bar_y() + 24.0),
             14.0,
             Color::srgb(0.7, 0.5, 0.2),
             46.0,
@@ -500,14 +517,14 @@ pub(crate) fn spawn_top_hud(
             let castle = &snapshot.castles[index];
             spawn_resource_chip(
                 commands,
-                Vec2::new(206.0, TOP_BAR_Y + 6.0),
+                Vec2::new(206.0, layout.top_bar_y() + 6.0),
                 "GOLD",
                 &econ.gold.to_string(),
                 TEXT_GOLD,
             );
             spawn_resource_chip(
                 commands,
-                Vec2::new(298.0, TOP_BAR_Y + 6.0),
+                Vec2::new(298.0, layout.top_bar_y() + 6.0),
                 "INC",
                 &econ.income.to_string(),
                 Color::srgb(0.58, 0.92, 0.62),
@@ -515,7 +532,7 @@ pub(crate) fn spawn_top_hud(
             spawn_ui_label(
                 commands,
                 "CASTLE",
-                Vec2::new(376.0, TOP_BAR_Y + 12.0),
+                Vec2::new(376.0, layout.top_bar_y() + 12.0),
                 8.5,
                 Color::srgb(0.62, 0.58, 0.48),
                 45.0,
@@ -524,7 +541,7 @@ pub(crate) fn spawn_top_hud(
             );
             spawn_value_bar(
                 commands,
-                Vec2::new(438.0, TOP_BAR_Y + 7.0),
+                Vec2::new(438.0, layout.top_bar_y() + 7.0),
                 Vec2::new(104.0, 8.0),
                 castle.health.max(0) as f32 / castle.max_health.max(1) as f32,
                 Color::srgb(0.18, 0.82, 0.36),
@@ -533,7 +550,7 @@ pub(crate) fn spawn_top_hud(
             spawn_ui_label(
                 commands,
                 &format!("{}/{}", castle.health.max(0), castle.max_health),
-                Vec2::new(500.0, TOP_BAR_Y + 6.0),
+                Vec2::new(500.0, layout.top_bar_y() + 6.0),
                 10.0,
                 TEXT_PARCHMENT,
                 46.0,
@@ -545,7 +562,7 @@ pub(crate) fn spawn_top_hud(
         spawn_ui_label(
             commands,
             "Press Enter to join",
-            Vec2::new(500.0, TOP_BAR_Y + 7.0),
+            Vec2::new(500.0, layout.top_bar_y() + 7.0),
             11.0,
             TEXT_GOLD,
             45.0,
@@ -752,23 +769,24 @@ pub(crate) fn lobby_game_row_size() -> Vec2 {
     Vec2::new(460.0, 32.0)
 }
 
-pub(crate) fn spawn_bottom_console(commands: &mut Commands) {
+pub(crate) fn spawn_bottom_console(commands: &mut Commands, layout: &UiLayout) {
+    let bar_half = layout.bar_half_width();
     spawn_ui_panel(
         commands,
-        Vec2::new(0.0, UI_PANEL_Y),
-        Vec2::new(1048.0, 188.0),
+        Vec2::new(0.0, layout.panel_y()),
+        Vec2::new(bar_half * 2.0, 188.0),
         40.0,
     );
     spawn_ui_rect(
         commands,
-        Vec2::new(-300.0, UI_PANEL_Y + 4.0),
+        Vec2::new(-300.0, layout.panel_y() + 4.0),
         Vec2::new(4.0, 164.0),
         PANEL_EDGE,
         44.0,
     );
     spawn_ui_rect(
         commands,
-        Vec2::new(178.0, UI_PANEL_Y + 4.0),
+        Vec2::new(178.0, layout.panel_y() + 4.0),
         Vec2::new(4.0, 164.0),
         PANEL_EDGE,
         44.0,
@@ -780,6 +798,7 @@ pub(crate) fn spawn_context_bay(
     details: Option<&str>,
     race_popup_open: bool,
     has_selection: bool,
+    layout: &UiLayout,
 ) {
     if race_popup_open {
         return;
@@ -787,10 +806,11 @@ pub(crate) fn spawn_context_bay(
     let Some(details) = details.filter(|_| has_selection) else {
         return;
     };
+    let bay_x = -layout.bar_half_width() + 250.0;
     spawn_ui_label(
         commands,
         "Selection",
-        Vec2::new(-274.0, UI_PANEL_Y + 58.0),
+        Vec2::new(bay_x, layout.panel_y() + 58.0),
         13.0,
         TEXT_GOLD,
         46.0,
@@ -800,7 +820,7 @@ pub(crate) fn spawn_context_bay(
     spawn_ui_label(
         commands,
         details,
-        Vec2::new(-274.0, UI_PANEL_Y + 32.0),
+        Vec2::new(bay_x, layout.panel_y() + 32.0),
         11.2,
         TEXT_PARCHMENT,
         46.0,
@@ -818,11 +838,12 @@ pub(crate) fn spawn_command_card(
     race: RaceKind,
     selected_kind: Option<BuildingKind>,
     hovered_kind: Option<BuildingKind>,
+    layout: &UiLayout,
 ) {
     let local_gold = local_gold(state, net);
     for (idx, kind) in balance.race(race).buildings.iter().enumerate() {
         let config = balance.building(*kind);
-        let center = command_button_center(idx);
+        let center = command_button_center(idx, layout);
         let selected = selected_kind == Some(*kind);
         let hovered = hovered_kind == Some(*kind);
         let affordable = local_gold.is_none_or(|gold| gold >= config.cost);
@@ -880,7 +901,7 @@ pub(crate) fn spawn_command_card(
             Justify::Center,
         );
     }
-    let cancel_center = command_button_center(8);
+    let cancel_center = command_button_center(8, layout);
     spawn_ui_button(
         commands,
         cancel_center,
@@ -915,12 +936,13 @@ pub(crate) fn format_match_time(secs: f32) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-pub(crate) fn command_button_center(idx: usize) -> Vec2 {
+pub(crate) fn command_button_center(idx: usize, layout: &UiLayout) -> Vec2 {
+    let origin = layout.command_grid_origin();
     let col = idx % 3;
     let row = idx / 3;
     Vec2::new(
-        COMMAND_GRID_ORIGIN.x + col as f32 * 58.0,
-        COMMAND_GRID_ORIGIN.y - row as f32 * 50.0,
+        origin.x + col as f32 * 58.0,
+        origin.y - row as f32 * 50.0,
     )
 }
 
@@ -1119,8 +1141,12 @@ pub(crate) fn spawn_build_tooltip(
     commands: &mut Commands,
     balance: &BalanceConfig,
     kind: BuildingKind,
+    layout: &UiLayout,
 ) {
-    let pos = Vec2::new(354.0, UI_PANEL_Y + 116.0);
+    let pos = Vec2::new(
+        layout.command_grid_origin().x + 4.0,
+        layout.panel_y() + 116.0,
+    );
     spawn_ui_panel(commands, pos, Vec2::new(326.0, 120.0), 49.0);
     spawn_ui_label(
         commands,
@@ -1167,11 +1193,12 @@ pub(crate) fn spawn_race_selection_popup(
     commands: &mut Commands,
     balance: &BalanceConfig,
     selected_race: Option<RaceKind>,
+    layout: &UiLayout,
 ) {
     spawn_ui_rect(
         commands,
         Vec2::ZERO,
-        Vec2::new(1100.0, 720.0),
+        layout.half * 2.0,
         Color::srgba(0.01, 0.008, 0.006, 0.58),
         54.0,
     );
@@ -1279,10 +1306,11 @@ pub(crate) fn spawn_race_selection_popup(
 
 pub(crate) fn race_card_summary(balance: &BalanceConfig, race: RaceKind) -> String {
     let config = balance.race(race);
+    // Pre-wrapped to stay inside the 156px card; longer lines overlap neighbors.
     let blurb = match race {
-        RaceKind::Vanguard => "Steady frontline + ranged. Flexible and forgiving.",
-        RaceKind::Grove => "Cheap swarms, tanky guards, healing. Wins long games.",
-        RaceKind::Ember => "Fast cheap attackers and burst casters. Press early.",
+        RaceKind::Vanguard => "Steady frontline +\nranged. Flexible and\nforgiving.",
+        RaceKind::Grove => "Cheap swarms, tanky\nguards, healing. Wins\nlong games.",
+        RaceKind::Ember => "Fast cheap attackers\nand burst casters.\nPress early.",
     };
     format!(
         "{}\nCastle HP: {}   Armor: {}   Buildings: {}",
@@ -1316,42 +1344,44 @@ pub(crate) fn spawn_minimap(
     viewer_team: Option<Team>,
     camera: Option<(&Transform, &Projection)>,
     window: Option<&Window>,
+    layout: &UiLayout,
 ) {
+    let center = layout.minimap_center();
     // Taller minimap for 4-lane battlefields
     let lane_factor = if snapshot.players.len() > 2 { 1.6 } else { 1.0 };
     let map_size = Vec2::new(MINIMAP_SIZE.x, MINIMAP_SIZE.y * lane_factor) + Vec2::new(12.0, 12.0);
-    spawn_ui_panel(commands, MINIMAP_CENTER, map_size, 48.0);
+    spawn_ui_panel(commands, center, map_size, 48.0);
     spawn_ui_rect(
         commands,
-        MINIMAP_CENTER,
+        center,
         MINIMAP_SIZE,
         Color::srgba(0.025, 0.028, 0.022, 0.96),
         50.0,
     );
     spawn_ui_rect(
         commands,
-        MINIMAP_CENTER,
+        center,
         MINIMAP_SIZE - Vec2::new(10.0, 10.0),
         Color::srgba(0.16, 0.30, 0.12, 0.35),
         50.5,
     );
     for lane in Lane::ALL {
-        let lane_pos = minimap_world_to_ui(Vec2::new(0.0, lane_world_y(lane)));
+        let lane_pos = minimap_world_to_ui(Vec2::new(0.0, lane_world_y(lane)), layout);
         spawn_ui_rect(
             commands,
-            Vec2::new(MINIMAP_CENTER.x, lane_pos.y),
+            Vec2::new(center.x, lane_pos.y),
             Vec2::new(MINIMAP_SIZE.x - 14.0, 3.0),
             Color::srgba(0.62, 0.50, 0.28, 0.58),
             51.0,
         );
     }
-    spawn_minimap_fog(commands, snapshot, fog, viewer_team);
+    spawn_minimap_fog(commands, snapshot, fog, viewer_team, layout);
 
     for castle in &snapshot.castles {
         if !is_castle_visible(snapshot, viewer_team, castle.team) {
             continue;
         }
-        let pos = minimap_world_to_ui(castle_world_pos(castle.team));
+        let pos = minimap_world_to_ui(castle_world_pos(castle.team), layout);
         spawn_ui_rect(
             commands,
             pos,
@@ -1368,7 +1398,7 @@ pub(crate) fn spawn_minimap(
                     building.lane,
                     building.zone,
                     building.cell,
-                ));
+                ), layout);
                 spawn_ui_rect(
                     commands,
                     pos,
@@ -1380,12 +1410,7 @@ pub(crate) fn spawn_minimap(
             continue;
         }
         let side = side_of_player(snapshot, building.owner);
-        let pos = minimap_world_to_ui(cell_to_world(
-            side,
-            building.lane,
-            building.zone,
-            building.cell,
-        ));
+        let pos = minimap_world_to_ui(cell_to_world(side, building.lane, building.zone, building.cell), layout);
         spawn_ui_rect(
             commands,
             pos,
@@ -1398,7 +1423,7 @@ pub(crate) fn spawn_minimap(
         if !is_unit_visible(snapshot, viewer_team, unit) {
             continue;
         }
-        let pos = minimap_world_to_ui(unit_world_pos(unit));
+        let pos = minimap_world_to_ui(unit_world_pos(unit), layout);
         spawn_ui_rect(
             commands,
             pos,
@@ -1415,7 +1440,7 @@ pub(crate) fn spawn_minimap(
             1.0
         };
         let view_size = Vec2::new(window.width() * scale, window.height() * scale);
-        let center = minimap_world_to_ui(camera_transform.translation.truncate());
+        let view_center = minimap_world_to_ui(camera_transform.translation.truncate(), layout);
         let size = Vec2::new(
             view_size.x / MAP_W * MINIMAP_SIZE.x,
             view_size.y / MAP_H * MINIMAP_SIZE.y,
@@ -1423,35 +1448,35 @@ pub(crate) fn spawn_minimap(
         .clamp(Vec2::new(10.0, 8.0), MINIMAP_SIZE);
         spawn_ui_rect(
             commands,
-            center,
+            view_center,
             size,
             Color::srgba(0.95, 0.82, 0.38, 0.22),
             56.0,
         );
         spawn_ui_rect(
             commands,
-            Vec2::new(center.x, center.y + size.y * 0.5),
+            Vec2::new(view_center.x, view_center.y + size.y * 0.5),
             Vec2::new(size.x, 2.0),
             TEXT_GOLD,
             57.0,
         );
         spawn_ui_rect(
             commands,
-            Vec2::new(center.x, center.y - size.y * 0.5),
+            Vec2::new(view_center.x, view_center.y - size.y * 0.5),
             Vec2::new(size.x, 2.0),
             TEXT_GOLD,
             57.0,
         );
         spawn_ui_rect(
             commands,
-            Vec2::new(center.x - size.x * 0.5, center.y),
+            Vec2::new(view_center.x - size.x * 0.5, view_center.y),
             Vec2::new(2.0, size.y),
             TEXT_GOLD,
             57.0,
         );
         spawn_ui_rect(
             commands,
-            Vec2::new(center.x + size.x * 0.5, center.y),
+            Vec2::new(view_center.x + size.x * 0.5, view_center.y),
             Vec2::new(2.0, size.y),
             TEXT_GOLD,
             57.0,
@@ -1464,6 +1489,7 @@ pub(crate) fn spawn_minimap_fog(
     snapshot: &MatchSnapshot,
     fog: &FogMemory,
     viewer_team: Option<Team>,
+    layout: &UiLayout,
 ) {
     let Some(team) = viewer_team else {
         return;
@@ -1489,7 +1515,7 @@ pub(crate) fn spawn_minimap_fog(
             }
             spawn_ui_rect(
                 commands,
-                minimap_world_to_ui(world),
+                minimap_world_to_ui(world, layout),
                 tile_size,
                 Color::srgba(0.0, 0.0, 0.0, alpha),
                 52.0,
@@ -1498,10 +1524,11 @@ pub(crate) fn spawn_minimap_fog(
     }
 }
 
-pub(crate) fn minimap_world_to_ui(pos: Vec2) -> Vec2 {
+pub(crate) fn minimap_world_to_ui(pos: Vec2, layout: &UiLayout) -> Vec2 {
+    let center = layout.minimap_center();
     Vec2::new(
-        MINIMAP_CENTER.x + (pos.x / MAP_W).clamp(-0.5, 0.5) * MINIMAP_SIZE.x,
-        MINIMAP_CENTER.y + (pos.y / MAP_H).clamp(-0.5, 0.5) * MINIMAP_SIZE.y,
+        center.x + (pos.x / MAP_W).clamp(-0.5, 0.5) * MINIMAP_SIZE.x,
+        center.y + (pos.y / MAP_H).clamp(-0.5, 0.5) * MINIMAP_SIZE.y,
     )
 }
 
@@ -1672,8 +1699,8 @@ pub(crate) fn truncate_text(value: &str, max_chars: usize) -> String {
 }
 
 /// Replay progress bar (plan.md Phase 3 replay playback UI).
-fn spawn_replay_progress_bar(commands: &mut Commands, fraction: f32) {
-    let bar_y = TOP_BAR_Y - 8.0;
+fn spawn_replay_progress_bar(commands: &mut Commands, fraction: f32, layout: &UiLayout) {
+    let bar_y = layout.top_bar_y() - 8.0;
     spawn_ui_rect(
         commands,
         Vec2::new(0.0, bar_y),

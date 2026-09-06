@@ -229,6 +229,7 @@ pub(crate) fn build_selection_input(
 pub(crate) fn ui_mouse_input(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<UiLayout>,
     mut selection: ResMut<BuildSelection>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
@@ -311,7 +312,7 @@ pub(crate) fn ui_mouse_input(
         return;
     }
 
-    if screen.y > UI_PANEL_TOP_Y {
+    if screen.y > layout.panel_top_y() {
         return;
     }
 
@@ -320,13 +321,13 @@ pub(crate) fn ui_mouse_input(
     };
     let balance = active_balance(&state);
     for (idx, kind) in balance.race(race).buildings.iter().enumerate() {
-        let center = command_button_center(idx);
+        let center = command_button_center(idx, &layout);
         if point_in_rect(screen, center, Vec2::splat(54.0)) {
             selection.kind = Some(*kind);
             return;
         }
     }
-    if point_in_rect(screen, command_button_center(8), Vec2::splat(54.0)) {
+    if point_in_rect(screen, command_button_center(8, &layout), Vec2::splat(54.0)) {
         selection.kind = None;
     }
 }
@@ -366,6 +367,7 @@ pub(crate) fn placement_input(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    layout: Res<UiLayout>,
     mut net: ResMut<ClientNet>,
     mut selection: ResMut<BuildSelection>,
     mut world_selection: ResMut<WorldSelection>,
@@ -399,7 +401,7 @@ pub(crate) fn placement_input(
     let Ok(world) = camera.viewport_to_world_2d(transform, cursor) else {
         return;
     };
-    if screen.y <= UI_PANEL_TOP_Y {
+    if screen.y <= layout.panel_top_y() {
         return;
     }
     let Some(kind) = selection.kind else {
@@ -494,6 +496,7 @@ pub(crate) fn update_placement_preview(
     preview_query: Query<Entity, With<PreviewEntity>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    layout: Res<UiLayout>,
     net: Res<ClientNet>,
     selection: Res<BuildSelection>,
     state: Res<SnapshotState>,
@@ -527,7 +530,7 @@ pub(crate) fn update_placement_preview(
     let Ok(world) = camera.viewport_to_world_2d(transform, cursor) else {
         return;
     };
-    if screen.y <= UI_PANEL_TOP_Y {
+    if screen.y <= layout.panel_top_y() {
         return;
     }
     let Some(kind) = selection.kind else {
@@ -564,6 +567,7 @@ pub(crate) fn update_placement_preview(
 
 pub(crate) fn update_build_hover(
     windows: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<UiLayout>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
     mut hover: ResMut<BuildHover>,
@@ -574,7 +578,7 @@ pub(crate) fn update_build_hover(
         }
         return;
     };
-    if screen.y > UI_PANEL_TOP_Y {
+    if screen.y > layout.panel_top_y() {
         if hover.kind.is_some() {
             hover.kind = None;
         }
@@ -594,7 +598,7 @@ pub(crate) fn update_build_hover(
         .iter()
         .enumerate()
         .find_map(|(idx, kind)| {
-            let center = command_button_center(idx);
+            let center = command_button_center(idx, &layout);
             point_in_rect(screen, center, Vec2::splat(54.0)).then_some(*kind)
         });
 
@@ -606,13 +610,14 @@ pub(crate) fn update_build_hover(
 pub(crate) fn update_world_hover(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    layout: Res<UiLayout>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
     mut hover: ResMut<WorldHover>,
 ) {
     let hovered = cursor_world(&windows, &camera_query).and_then(|world| {
         let screen = cursor_screen_pos(&windows)?;
-        if screen.y <= UI_PANEL_TOP_Y {
+        if screen.y <= layout.panel_top_y() {
             return None;
         }
         state
@@ -633,6 +638,7 @@ pub(crate) fn camera_controls(
     time: Res<Time>,
     mut wheel_events: MessageReader<MouseWheel>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    layout: Res<UiLayout>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
     mut camera_home: ResMut<CameraHome>,
@@ -693,7 +699,7 @@ pub(crate) fn camera_controls(
             if cursor.y <= edge {
                 direction.y += 1.0;
             } else if cursor.y >= window.height() - edge
-                && cursor_screen_pos(&windows).is_some_and(|screen| screen.y > UI_PANEL_TOP_Y)
+                && cursor_screen_pos(&windows).is_some_and(|screen| screen.y > layout.panel_top_y())
             {
                 direction.y -= 1.0;
             }
