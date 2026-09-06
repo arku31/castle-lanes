@@ -1120,6 +1120,8 @@ pub struct GameSim {
     pub winner: Option<Team>,
     pub message: String,
     pub balance: BalanceConfig,
+    /// Players per side (1 = 1v1, 2 = 2v2, ...). Set at game creation.
+    pub team_size: usize,
     next_id: u64,
     seed: u64,
     rng_state: u64,
@@ -1155,6 +1157,7 @@ impl GameSim {
             winner: None,
             message: "Waiting for two players.".to_string(),
             balance,
+            team_size: 1,
             next_id: 1,
             seed,
             rng_state: mix_seed(seed),
@@ -1166,6 +1169,16 @@ impl GameSim {
         };
         sim.reset_match_state();
         sim
+    }
+
+    /// Set the players-per-side for team play. Must be called before any
+    /// player joins; e.g. team_size 2 creates a 2v2 lobby seating 4.
+    pub fn set_team_size(&mut self, team_size: usize) -> Result<(), String> {
+        if !self.players.is_empty() {
+            return Err("Cannot change team size after players have joined.".to_string());
+        }
+        self.team_size = team_size.max(1);
+        Ok(())
     }
 
     pub fn player_index(&self, player_id: PlayerId) -> Option<usize> {
@@ -1267,11 +1280,13 @@ impl GameSim {
             return Ok(player.clone());
         }
 
-        if self.players.len() >= 2 {
+        let max_players = self.team_size * 2;
+        if self.players.len() >= max_players {
             return Err("Match is full.".to_string());
         }
 
-        let team = if self.players.is_empty() {
+        // First team_size = Left, next team_size = Right (plan.md team play).
+        let team = if self.players.len() < self.team_size {
             Team::Left
         } else {
             Team::Right
@@ -1587,7 +1602,7 @@ impl GameSim {
         if self.phase != MatchPhase::Lobby {
             return;
         }
-        if self.players.len() == 2
+        if self.players.len() == self.team_size * 2
             && self
                 .players
                 .iter()
@@ -3429,6 +3444,66 @@ mod tests {
             wounded_dx,
             healthy_dx
         );
+    }
+
+    #[test]
+    fn team_play_four_player_2v2() {
+        let mut sim = GameSim::with_seed(BalanceConfig::default(), 99);
+        sim.set_team_size(2).unwrap();
+        let p1 = sim.join_or_update_player("Alice".to_string()).unwrap().id;
+        let p2 = sim.join_or_update_player("Bob".to_string()).unwrap().id;
+        let p3 = sim.join_or_update_player("Carol".to_string()).unwrap().id;
+        let p4 = sim.join_or_update_player("Dave".to_string()).unwrap().id;
+        sim.set_race(p1, RaceKind::Vanguard).unwrap();
+        sim.set_race(p2, RaceKind::Grove).unwrap();
+        sim.set_race(p3, RaceKind::Ember).unwrap();
+        sim.set_race(p4, RaceKind::Vanguard).unwrap();
+        sim.set_ready(p1, true).unwrap();
+        sim.set_ready(p2, true).unwrap();
+        sim.set_ready(p3, true).unwrap();
+        sim.set_ready(p4, true).unwrap();
+        assert_eq!(sim.phase, MatchPhase::Playing);
+        assert_eq!(sim.players.len(), 4);
+        assert_eq!(sim.economies.len(), 4);
+        assert_eq!(sim.castles.len(), 4);
+        // Sides: first 2 = Left, next 2 = Right
+        assert_eq!(sim.players[0].team, Team::Left);
+        assert_eq!(sim.players[1].team, Team::Left);
+        assert_eq!(sim.players[2].team, Team::Right);
+        assert_eq!(sim.players[3].team, Team::Right);
+        // Each player has their own castle
+        for (index, castle) in sim.castles.iter().enumerate() {
+            assert_eq!(castle.owner, sim.players[index].id);
+        }
+    }
+
+    #[test]
+    fn team_play_four_player_victory_when_side_wiped() {
+        let mut sim = GameSim::with_seed(BalanceConfig::default(), 100);
+        sim.set_team_size(2).unwrap();
+        for name in ["Alice", "Bob", "Carol", "Dave"] {
+            let id = sim.join_or_update_player(name.to_string()).unwrap().id;
+            sim.set_race(id, RaceKind::Vanguard).unwrap();
+            sim.set_ready(id, true).unwrap();
+        }
+        assert_eq!(sim.phase, MatchPhase::Playing);
+        // Kill both Right-side castles -> Left wins
+        for castle in sim.castles.iter_mut().filter(|c| c.team == Team::Right) {
+            castle.health = 0;
+        }
+        sim.tick(1.0 / 30.0);
+        assert_eq!(sim.phase, MatchPhase::GameOver);
+        assert_eq!(sim.winner, Some(Team::Left));
+    }
+
+    #[test]
+    fn team_play_rejects_fifth_player_in_2v2() {
+        let mut sim = GameSim::with_seed(BalanceConfig::default(), 101);
+        sim.set_team_size(2).unwrap();
+        for name in ["Alice", "Bob", "Carol", "Dave"] {
+            sim.join_or_update_player(name.to_string()).unwrap();
+        }
+        assert!(sim.join_or_update_player("Eve".to_string()).is_err());
     }
 
     #[test]
