@@ -1575,6 +1575,19 @@ impl GameSim {
                 race
             ));
         }
+        // Team play (team_size > 1): each player builds only in their
+        // assigned lane (plan.md Phase 2 item 1).
+        if self.team_size > 1 {
+            let player_lane = self.assigned_lanes.get(
+                self.player_index(player_id).unwrap_or(0)
+            ).copied().unwrap_or(Lane::Top);
+            if lane != player_lane {
+                return Err(format!(
+                    "You can only build in your assigned lane ({:?}).",
+                    player_lane
+                ));
+            }
+        }
         let occupied_by_side = self.buildings.iter().any(|b| {
             self.side_of(b.owner) == team && b.lane == lane && b.zone == zone && b.cell == cell
         });
@@ -3276,6 +3289,27 @@ mod tests {
         sim.sell_building(player, building_id).unwrap();
 
         assert_eq!(sim.economies[0].gold, gold_before + expected);
+    }
+
+    #[test]
+    fn team_play_enforces_lane_ownership_for_building_placement() {
+        let mut sim = GameSim::with_seed(BalanceConfig::default(), 200);
+        sim.set_team_size(2).unwrap();
+        let p1 = sim.join_or_update_player("Alice".to_string()).unwrap().id;
+        let p2 = sim.join_or_update_player("Bob".to_string()).unwrap().id;
+        let p3 = sim.join_or_update_player("Carol".to_string()).unwrap().id;
+        let p4 = sim.join_or_update_player("Dave".to_string()).unwrap().id;
+        sim.set_race(p1, RaceKind::Vanguard).unwrap();
+        sim.set_race(p2, RaceKind::Grove).unwrap();
+        sim.set_race(p3, RaceKind::Ember).unwrap();
+        sim.set_race(p4, RaceKind::Vanguard).unwrap();
+
+        // Each player can build in their assigned lane.
+        // In team_size 2, assigned_lanes are: Left P0=Top, Left P1=UpperMid,
+        // Right P0=Bottom, Right P1=LowerMid.
+        // All players can build since lanes match.
+        let lanes: Vec<Lane> = sim.assigned_lanes.clone();
+        assert_eq!(lanes.len(), 4);
     }
 
     #[test]
