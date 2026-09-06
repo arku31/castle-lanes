@@ -85,6 +85,7 @@ fn main() -> std::io::Result<()> {
                                     options.server_addr,
                                     &ClientPacket::CreateGame {
                                         name: format!("{}'s Game", options.name),
+                                        team_size: None,
                                     },
                                 );
                             }

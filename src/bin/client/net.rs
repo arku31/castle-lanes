@@ -149,6 +149,7 @@ pub(crate) fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotSta
             &net,
             &ClientPacket::CreateGame {
                 name: format!("{}'s Game", net.player_name),
+                    team_size: None,
             },
         );
         net.sent_auto_game = true;

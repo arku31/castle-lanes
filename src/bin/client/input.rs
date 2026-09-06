@@ -28,6 +28,7 @@ pub(crate) fn menu_and_lobby_input(
                 &net,
                 &ClientPacket::CreateGame {
                     name: format!("{}'s Game", net.player_name),
+                    team_size: None,
                 },
             );
         }
@@ -38,6 +39,7 @@ pub(crate) fn menu_and_lobby_input(
                 &net,
                 &ClientPacket::CreateGame {
                     name: format!("{}'s Game", net.player_name),
+                    team_size: None,
                 },
             );
         }
@@ -235,6 +237,7 @@ pub(crate) fn ui_mouse_input(
                 &net,
                 &ClientPacket::CreateGame {
                     name: format!("{}'s Game", net.player_name),
+                    team_size: None,
                 },
             );
             return;

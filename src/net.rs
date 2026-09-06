@@ -70,6 +70,8 @@ pub enum ClientPacket {
     ListGames,
     CreateGame {
         name: String,
+        #[serde(default)]
+        team_size: Option<usize>,
     },
     JoinGame {
         game_id: GameId,
