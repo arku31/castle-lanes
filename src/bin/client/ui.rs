@@ -1288,10 +1288,13 @@ pub(crate) fn spawn_minimap(
     camera: Option<(&Transform, &Projection)>,
     window: Option<&Window>,
 ) {
+    // Taller minimap for 4-lane battlefields
+    let lane_factor = if snapshot.players.len() > 2 { 1.6 } else { 1.0 };
+    let map_size = Vec2::new(MINIMAP_SIZE.x, MINIMAP_SIZE.y * lane_factor) + Vec2::new(12.0, 12.0);
     spawn_ui_panel(
         commands,
         MINIMAP_CENTER,
-        MINIMAP_SIZE + Vec2::new(12.0, 12.0),
+        map_size,
         48.0,
     );
     spawn_ui_rect(
