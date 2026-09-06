@@ -92,6 +92,7 @@ struct GameRoom {
 }
 
 fn main() -> std::io::Result<()> {
+    install_crash_reporter();
     let all_args: Vec<String> = env::args().skip(1).collect();
     if all_args.first().map(String::as_str) == Some("--version") {
         println!("castle_lanes_server {}", castle_lanes::VERSION);
@@ -500,6 +501,46 @@ fn update_reconnect_deadlines(
         }
     }
     changed_games
+}
+
+/// Phase 4 crash reporting: panics write a timestamped log for debugging.
+fn install_crash_reporter() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let dir = std::path::Path::new("crashes");
+        let _ = std::fs::create_dir_all(dir);
+        let path = dir.join(format!("server_crash_{}.log", timestamp));
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let message = if let Some(msg) = info.payload().downcast_ref::<&str>() {
+            msg.to_string()
+        } else if let Some(msg) = info.payload().downcast_ref::<String>() {
+            msg.clone()
+        } else {
+            "unknown panic payload".to_string()
+        };
+        let report = format!(
+            "Castle Lanes server v{} crash report\n\
+             timestamp: {}\n\
+             location: {}\n\
+             message: {}\n\
+             \nBacktrace:\n{:?}\n",
+            castle_lanes::VERSION,
+            timestamp,
+            location,
+            message,
+            std::backtrace::Backtrace::force_capture()
+        );
+        let _ = std::fs::write(&path, report);
+        eprintln!("Crash log written to {}", path.display());
+        default_hook(info);
+    }));
 }
 
 fn room_seed(game_id: GameId) -> u64 {

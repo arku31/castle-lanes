@@ -540,6 +540,47 @@ struct CombatVfx {
     velocity: Vec2,
 }
 
+/// Phase 4 crash reporting: panics write a timestamped log with the message,
+/// backtrace, and system info to `crashes/` for post-mortem debugging.
+fn install_crash_reporter() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let dir = std::path::Path::new("crashes");
+        let _ = std::fs::create_dir_all(dir);
+        let path = dir.join(format!("crash_{}.log", timestamp));
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let message = if let Some(msg) = info.payload().downcast_ref::<&str>() {
+            msg.to_string()
+        } else if let Some(msg) = info.payload().downcast_ref::<String>() {
+            msg.clone()
+        } else {
+            "unknown panic payload".to_string()
+        };
+        let report = format!(
+            "Castle Lanes v{} crash report\n\
+             timestamp: {} (unix)\n\
+             location: {}\n\
+             message: {}\n\
+             \nBacktrace:\n{:?}\n",
+            castle_lanes::VERSION,
+            timestamp,
+            location,
+            message,
+            std::backtrace::Backtrace::force_capture()
+        );
+        let _ = std::fs::write(&path, report);
+        eprintln!("Crash log written to {}", path.display());
+        default_hook(info);
+    }));
+}
+
 /// Resolve an entity's owning player to its side; presentation logic is
 /// side-based while entities carry PlayerId owners (plan.md Phase 1 item 3).
 /// Position of a player in the snapshot's per-player vectors.
@@ -662,6 +703,7 @@ fn apply_recorded_intent(
 fn replay_input() {}
 
 fn main() {
+    install_crash_reporter();
     let options = parse_args();
     if let Some(path) = options.replay.clone() {
         run_replay(path);
