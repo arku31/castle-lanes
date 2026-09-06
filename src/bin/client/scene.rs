@@ -107,7 +107,8 @@ pub(crate) fn sync_static_scene(
         for entity in &statics {
             commands.entity(entity).despawn();
         }
-        spawn_static_board(&mut commands, net.team);
+        let lane_count = state.snapshot.as_ref().map(|s| s.players.len()).unwrap_or(2);
+        spawn_static_board(&mut commands, net.team, lane_count);
         if let Some(snapshot) = &state.snapshot {
             let balance = active_balance(&state);
             for building in &snapshot.buildings {
@@ -843,10 +844,11 @@ pub(crate) fn hash_unit(index: u32, salt: u32) -> f32 {
     (value as f32) / (u32::MAX as f32)
 }
 
-pub(crate) fn spawn_static_board(commands: &mut Commands, team: Option<Team>) {
+pub(crate) fn spawn_static_board(commands: &mut Commands, team: Option<Team>, lane_count: usize) {
     let mut spawned = Vec::new();
-    for lane in Lane::ALL {
-        let y = lane_world_y(lane);
+    let active_lanes = &Lane::ALL[..lane_count.min(Lane::ALL.len())];
+    for lane in active_lanes {
+        let y = lane_world_y(*lane);
         spawned.push(spawn_rect(
             commands,
             Vec2::new(0.0, y),

@@ -901,7 +901,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         ember_inferno_engine: asset_server.load("art/buildings/ember_inferno_engine.png"),
     });
     spawn_grass_background(&mut commands);
-    spawn_static_board(&mut commands, None);
+    spawn_static_board(&mut commands, None, 2);
     let fonts = FontAssets {
         display: asset_server.load("fonts/MedievalSharp.ttf"),
     };
