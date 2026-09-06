@@ -65,16 +65,22 @@ impl ProfileStore {
     }
 
     fn record_result(&mut self, winner: &str, loser: &str) {
-        let w = self.profiles.entry(winner.to_string()).or_insert_with(|| PlayerProfile {
-            name: winner.to_string(),
-            ..Default::default()
-        });
+        let w = self
+            .profiles
+            .entry(winner.to_string())
+            .or_insert_with(|| PlayerProfile {
+                name: winner.to_string(),
+                ..Default::default()
+            });
         w.wins += 1;
         w.games_played += 1;
-        let l = self.profiles.entry(loser.to_string()).or_insert_with(|| PlayerProfile {
-            name: loser.to_string(),
-            ..Default::default()
-        });
+        let l = self
+            .profiles
+            .entry(loser.to_string())
+            .or_insert_with(|| PlayerProfile {
+                name: loser.to_string(),
+                ..Default::default()
+            });
         l.losses += 1;
         l.games_played += 1;
         if let Ok(json) = serde_json::to_string_pretty(&self.profiles) {
@@ -274,7 +280,11 @@ fn handle_packet(
             touch_lobby(clients, addr)?;
             send_game_list(socket, addr, rooms)?;
         }
-        ClientPacket::CreateGame { name, team_size, random_factions } => {
+        ClientPacket::CreateGame {
+            name,
+            team_size,
+            random_factions,
+        } => {
             touch_lobby(clients, addr)?;
             leave_room(rooms, clients, addr);
             remove_empty_rooms(rooms);

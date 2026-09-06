@@ -2,7 +2,7 @@ use castle_lanes::net::{
     ClientPacket, PROTOCOL_VERSION, ServerPacket, apply_snapshot_delta, decode_server, encode,
 };
 use castle_lanes::sim::{
-    BalanceConfig, BuildZone, BuildingKind, GridCell, Lane, MatchPhase, RaceKind,
+    BalanceConfig, BuildZone, BuildingKind, GridCell, Lane, MatchPhase, RaceKind, Team,
 };
 use std::fs;
 use std::net::{SocketAddr, UdpSocket};
@@ -286,6 +286,123 @@ fn spawn_server_args(addr: SocketAddr, balance_path: Option<&Path>) -> ServerPro
     ServerProcess(child)
 }
 
+#[test]
+fn team_play_2v2_full_match_flow() {
+    let server_addr = unused_local_addr();
+    let _server = spawn_server(server_addr);
+
+    let mut sockets = Vec::new();
+    let mut players = Vec::new();
+    let names = ["Alice", "Bob", "Carol", "Dave"];
+    let races = [
+        RaceKind::Vanguard,
+        RaceKind::Grove,
+        RaceKind::Ember,
+        RaceKind::Vanguard,
+    ];
+
+    for (index, name) in names.iter().enumerate() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        connect(&socket, server_addr, name);
+        if index == 0 {
+            let player = create_game_with_team_size(&socket, server_addr, "2v2 Match", Some(2));
+            assert_eq!(player.team, Team::Left);
+            players.push(player);
+        } else {
+            let games = wait_for_game_list(&socket, Duration::from_secs(3));
+            let game = games.first().expect("game should be listed");
+            let player = join_game(&socket, server_addr, game.id);
+            players.push(player);
+        }
+        sockets.push(socket);
+    }
+
+    assert_eq!(players[0].team, Team::Left);
+    assert_eq!(players[1].team, Team::Left);
+    assert_eq!(players[2].team, Team::Right);
+    assert_eq!(players[3].team, Team::Right);
+
+    for (index, socket) in sockets.iter().enumerate() {
+        send(
+            socket,
+            server_addr,
+            &ClientPacket::SetRace {
+                player_id: players[index].id,
+                race: races[index],
+            },
+        );
+        send(
+            socket,
+            server_addr,
+            &ClientPacket::SetReady {
+                player_id: players[index].id,
+                ready: true,
+            },
+        );
+    }
+
+    let mut snapshots: Vec<Option<castle_lanes::sim::MatchSnapshot>> =
+        sockets.iter().map(|_| None).collect();
+    wait_for_snapshot(
+        &sockets[0],
+        &mut snapshots[0],
+        Duration::from_secs(5),
+        "2v2 match started",
+        |snapshot| snapshot.phase == MatchPhase::Playing && snapshot.players.len() == 4,
+    );
+
+    let lanes = [Lane::Top, Lane::UpperMid, Lane::Bottom, Lane::LowerMid];
+    let kinds = [
+        BuildingKind::VanguardBarracks,
+        BuildingKind::GroveRootDen,
+        BuildingKind::EmberCinderPit,
+        BuildingKind::VanguardBarracks,
+    ];
+    for (index, socket) in sockets.iter().enumerate() {
+        send(
+            socket,
+            server_addr,
+            &ClientPacket::PlaceBuilding {
+                player_id: players[index].id,
+                kind: kinds[index],
+                lane: lanes[index],
+                zone: BuildZone::Front,
+                cell: GridCell { x: 0, y: 0 },
+                seq: None,
+            },
+        );
+    }
+
+    wait_for_snapshot_with_keepalive(
+        &sockets[0],
+        &mut snapshots[0],
+        server_addr,
+        Duration::from_secs(10),
+        &[
+            (&sockets[0], "Alice"),
+            (&sockets[1], "Bob"),
+            (&sockets[2], "Carol"),
+            (&sockets[3], "Dave"),
+        ],
+        |snapshot| snapshot.buildings.len() >= 2,
+    );
+
+    let snapshot = snapshots[0].as_ref().unwrap();
+    // Fog: Alice only sees Left-team buildings
+    for index in 0..2 {
+        let owned = snapshot
+            .buildings
+            .iter()
+            .filter(|b| b.owner == players[index].id)
+            .count();
+        assert_eq!(owned, 1, "{} should have 1 building", names[index]);
+    }
+    assert_eq!(snapshot.buildings.len(), 2);
+}
+
 fn connect(socket: &UdpSocket, server_addr: SocketAddr, name: &str) {
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
@@ -309,12 +426,21 @@ fn create_game(
     server_addr: SocketAddr,
     name: &str,
 ) -> castle_lanes::sim::PlayerInfo {
+    create_game_with_team_size(socket, server_addr, name, None)
+}
+
+fn create_game_with_team_size(
+    socket: &UdpSocket,
+    server_addr: SocketAddr,
+    name: &str,
+    team_size: Option<usize>,
+) -> castle_lanes::sim::PlayerInfo {
     send(
         socket,
         server_addr,
         &ClientPacket::CreateGame {
             name: name.to_string(),
-            team_size: None,
+            team_size,
             random_factions: false,
         },
     );
@@ -326,7 +452,14 @@ fn join_game(
     server_addr: SocketAddr,
     game_id: castle_lanes::net::GameId,
 ) -> castle_lanes::sim::PlayerInfo {
-    send(socket, server_addr, &ClientPacket::JoinGame { game_id, spectator: false });
+    send(
+        socket,
+        server_addr,
+        &ClientPacket::JoinGame {
+            game_id,
+            spectator: false,
+        },
+    );
     wait_for_welcome(socket, Duration::from_secs(3))
 }
 

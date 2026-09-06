@@ -1607,9 +1607,11 @@ impl GameSim {
         // Team play (team_size > 1): each player builds only in their
         // assigned lane (plan.md Phase 2 item 1).
         if self.team_size > 1 {
-            let player_lane = self.assigned_lanes.get(
-                self.player_index(player_id).unwrap_or(0)
-            ).copied().unwrap_or(Lane::Top);
+            let player_lane = self
+                .assigned_lanes
+                .get(self.player_index(player_id).unwrap_or(0))
+                .copied()
+                .unwrap_or(Lane::Top);
             if lane != player_lane {
                 return Err(format!(
                     "You can only build in your assigned lane ({:?}).",

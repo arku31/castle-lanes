@@ -57,7 +57,13 @@ pub(crate) fn menu_and_lobby_input(
         ] {
             if keys.just_pressed(key) {
                 if let Some(game) = state.games.get(idx) {
-                    send_client(&net, &ClientPacket::JoinGame { game_id: game.id, spectator: false });
+                    send_client(
+                        &net,
+                        &ClientPacket::JoinGame {
+                            game_id: game.id,
+                            spectator: false,
+                        },
+                    );
                 }
             }
         }
@@ -253,7 +259,13 @@ pub(crate) fn ui_mouse_input(
         for (idx, game) in state.games.iter().take(5).enumerate() {
             if point_in_rect(screen, lobby_game_row_center(idx), lobby_game_row_size()) {
                 sfx.push(Sfx::UiClick);
-                send_client(&net, &ClientPacket::JoinGame { game_id: game.id, spectator: false });
+                send_client(
+                    &net,
+                    &ClientPacket::JoinGame {
+                        game_id: game.id,
+                        spectator: false,
+                    },
+                );
                 return;
             }
         }
@@ -803,14 +815,15 @@ pub(crate) fn world_to_build_slot(
 ) -> Option<(Lane, BuildZone, GridCell)> {
     // Team play: only the assigned lane is clickable
     let team_size = snapshot.players.len() / 2;
-    let team_players: Vec<_> = snapshot
-        .players
-        .iter()
-        .filter(|p| p.team == team)
-        .collect();
+    let team_players: Vec<_> = snapshot.players.iter().filter(|p| p.team == team).collect();
     let side_index = team_players
         .iter()
-        .position(|p| snapshot.players.iter().any(|q| q.id == player_id && q.name == p.name))
+        .position(|p| {
+            snapshot
+                .players
+                .iter()
+                .any(|q| q.id == player_id && q.name == p.name)
+        })
         .unwrap_or(0);
     let lanes: Vec<Lane> = if team_size > 1 {
         vec![Lane::for_player(team, side_index)]

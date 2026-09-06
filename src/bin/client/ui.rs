@@ -146,15 +146,16 @@ pub(crate) fn redraw_game_ui(
                 Justify::Center,
             );
             let record_note = if settings.wins > 0 || settings.losses > 0 {
-                format!("Your record: {}W/{}L   |   ", settings.wins, settings.losses)
+                format!(
+                    "Your record: {}W/{}L   |   ",
+                    settings.wins, settings.losses
+                )
             } else {
                 String::new()
             };
             spawn_ui_label(
                 &mut commands,
-                &format!(
-                    "{record_note}R = rematch   |   H = rules   |   O = settings"
-                ),
+                &format!("{record_note}R = rematch   |   H = rules   |   O = settings"),
                 Vec2::new(0.0, 52.0),
                 12.0,
                 Color::srgba(0.6, 0.55, 0.45, 0.9),
@@ -410,7 +411,8 @@ fn spawn_team_scoreboard(
 
         // Castle HP bar
         if let Some(castle) = castle {
-            let pct = (castle.health.max(0) as f32 / castle.max_health.max(1) as f32).clamp(0.0, 1.0);
+            let pct =
+                (castle.health.max(0) as f32 / castle.max_health.max(1) as f32).clamp(0.0, 1.0);
             let bar_w = 80.0;
             let bar_x = 80.0;
             spawn_ui_rect(
@@ -1318,12 +1320,7 @@ pub(crate) fn spawn_minimap(
     // Taller minimap for 4-lane battlefields
     let lane_factor = if snapshot.players.len() > 2 { 1.6 } else { 1.0 };
     let map_size = Vec2::new(MINIMAP_SIZE.x, MINIMAP_SIZE.y * lane_factor) + Vec2::new(12.0, 12.0);
-    spawn_ui_panel(
-        commands,
-        MINIMAP_CENTER,
-        map_size,
-        48.0,
-    );
+    spawn_ui_panel(commands, MINIMAP_CENTER, map_size, 48.0);
     spawn_ui_rect(
         commands,
         MINIMAP_CENTER,
