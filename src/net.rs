@@ -82,6 +82,12 @@ pub enum ClientPacket {
         spectator: bool,
     },
     LeaveGame,
+    /// Join the matchmaking queue for a game with this team size.
+    QueueForMatch {
+        team_size: usize,
+    },
+    /// Leave the matchmaking queue.
+    LeaveQueue,
     SetReady {
         player_id: PlayerId,
         ready: bool,
@@ -136,6 +142,11 @@ pub enum ServerPacket {
     },
     GameList {
         games: Vec<GameInfo>,
+    },
+    QueueStatus {
+        queued: usize,
+        needed: usize,
+        team_size: usize,
     },
     BalanceRaces {
         starting_gold: i32,

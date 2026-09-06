@@ -128,6 +128,7 @@ fn main() -> std::io::Result<()> {
     let mut clients: HashMap<SocketAddr, ClientSession> = HashMap::new();
     let mut next_game_id: GameId = 1;
     let mut reconnect_deadlines: ReconnectDeadlines = HashMap::new();
+    let mut match_queue: HashMap<usize, Vec<(SocketAddr, String)>> = HashMap::new();
     let mut profiles: ProfileStore = {
         let mut store = ProfileStore::default();
         if let Ok(raw) = std::fs::read_to_string("profiles.json") {
@@ -152,6 +153,7 @@ fn main() -> std::io::Result<()> {
                         &mut clients,
                         &mut next_game_id,
                         &profiles,
+                        &mut match_queue,
                         addr,
                         &buf[..len],
                     ) {
@@ -227,6 +229,7 @@ fn handle_packet(
     clients: &mut HashMap<SocketAddr, ClientSession>,
     next_game_id: &mut GameId,
     profiles: &ProfileStore,
+    match_queue: &mut HashMap<usize, Vec<(SocketAddr, String)>>,
     addr: SocketAddr,
     bytes: &[u8],
 ) -> Result<(), String> {
@@ -326,6 +329,74 @@ fn handle_packet(
             remove_empty_rooms(rooms);
             send_game_list(socket, addr, rooms)?;
             broadcast_game_lists(socket, rooms, clients);
+        }
+        ClientPacket::QueueForMatch { team_size } => {
+            touch_lobby(clients, addr)?;
+            let ts = team_size.clamp(1, 4);
+            let name = clients
+                .get(&addr)
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            // Don't double-queue
+            let already = match_queue
+                .get(&ts)
+                .map(|q| q.iter().any(|(a, _)| *a == addr))
+                .unwrap_or(false);
+            if !already {
+                match_queue.entry(ts).or_default().push((addr, name));
+            }
+            let needed = ts * 2;
+            let queued = match_queue.get(&ts).map(|q| q.len()).unwrap_or(0);
+            send_packet(
+                socket,
+                addr,
+                &ServerPacket::QueueStatus {
+                    queued,
+                    needed,
+                    team_size: ts,
+                },
+            )?;
+            // Auto-create when full
+            if queued >= needed {
+                let queue = match_queue.remove(&ts).unwrap();
+                let game_id = *next_game_id;
+                *next_game_id += 1;
+                let mut sim = GameSim::with_seed(balance.clone(), room_seed(game_id));
+                sim.set_team_size(ts).ok();
+                let mut room = GameRoom {
+                    id: game_id,
+                    name: format!("Matchmaking {}v{}", ts, ts),
+                    sim,
+                    clients: HashSet::new(),
+                    recorder: MatchRecorder::new(game_id),
+                };
+                for (queued_addr, queued_name) in &queue {
+                    if let Some(session) = clients.get_mut(queued_addr) {
+                        session.game_id = Some(game_id);
+                        session.last_snapshot = None;
+                        session.seen_enemy_buildings.clear();
+                    }
+                    if let Ok(player) = room.sim.join_or_update_player(queued_name.clone()) {
+                        send_packet(
+                            socket,
+                            *queued_addr,
+                            &ServerPacket::Welcome {
+                                game_id,
+                                player: player.clone(),
+                            },
+                        )?;
+                    }
+                    room.clients.insert(*queued_addr);
+                }
+                rooms.insert(game_id, room);
+                broadcast_game_lists(socket, rooms, clients);
+            }
+        }
+        ClientPacket::LeaveQueue => {
+            touch_lobby(clients, addr)?;
+            for queue in match_queue.values_mut() {
+                queue.retain(|(a, _)| *a != addr);
+            }
         }
         ClientPacket::SetReady { player_id, ready } => {
             let room = room_for_player(rooms, clients, addr, player_id)?;
