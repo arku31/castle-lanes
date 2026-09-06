@@ -184,6 +184,7 @@ fn main() -> std::io::Result<()> {
                         match default_lane_for_team(player.team) {
                             Lane::Top => Lane::Bottom,
                             Lane::Bottom => Lane::Top,
+                            _ => Lane::Top,
                         }
                     };
                     let cell = GridCell {

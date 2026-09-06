@@ -89,12 +89,39 @@ pub enum MatchPhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Lane {
+    /// Top-most lane (1v1: Left side)
     Top,
+    /// Upper-middle lane (2v2: Left P1, Right P1)
+    UpperMid,
+    /// Lower-middle lane (2v2: Left P0, Right P0)
+    LowerMid,
+    /// Bottom-most lane (1v1: Right side)
     Bottom,
 }
 
 impl Lane {
-    pub const ALL: [Lane; 2] = [Lane::Top, Lane::Bottom];
+    /// Number of active lanes depends on team size: 2 for 1v1, 4 for 2v2+.
+    pub const ALL: [Lane; 4] = [Lane::Top, Lane::UpperMid, Lane::LowerMid, Lane::Bottom];
+
+    /// Lanes used for a given team size: 2P -> 2 lanes, 4P -> 4 lanes.
+    pub fn active_lanes(team_size: usize) -> Vec<Lane> {
+        match team_size {
+            1 => vec![Lane::Top, Lane::Bottom],
+            _ => Lane::ALL.to_vec(),
+        }
+    }
+
+    /// The lane a player uses, based on their position within their side.
+    /// Left P0 -> Top, Left P1 -> UpperMid, etc. Right mirrors from Bottom.
+    pub fn for_player(team: Team, side_index: usize) -> Lane {
+        match (team, side_index) {
+            (Team::Left, 0) => Lane::Top,
+            (Team::Left, 1) => Lane::UpperMid,
+            (Team::Left, _) => Lane::LowerMid,
+            (Team::Right, 0) => Lane::Bottom,
+            (Team::Right, _) => Lane::LowerMid,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -456,8 +483,10 @@ pub fn building_spawn_pos(team: Team, zone: BuildZone, cell: GridCell) -> f32 {
 
 pub fn lane_center_y(lane: Lane) -> f32 {
     match lane {
-        Lane::Top => LANE_CENTER_Y,
-        Lane::Bottom => -LANE_CENTER_Y,
+        Lane::Top => 12.0,
+        Lane::UpperMid => 4.0,
+        Lane::LowerMid => -4.0,
+        Lane::Bottom => -12.0,
     }
 }
 
@@ -497,9 +526,11 @@ pub fn position_revealed_to(
         .iter()
         .map(|player| (player.id, player.team))
         .collect();
-    let castle = lane_position(Lane::Top, viewer.castle_pos());
-    if castle.distance(pos) <= VISION_CASTLE_RADIUS {
-        return true;
+    for lane in Lane::ALL {
+        let castle = lane_position(lane, viewer.castle_pos());
+        if castle.distance(pos) <= VISION_CASTLE_RADIUS {
+            return true;
+        }
     }
     for building in buildings
         .iter()

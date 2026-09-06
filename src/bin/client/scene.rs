@@ -760,8 +760,10 @@ pub(crate) fn fog_cell_center(col: usize, row: usize) -> Vec2 {
 
 pub(crate) fn lane_world_y(lane: Lane) -> f32 {
     match lane {
-        Lane::Top => 128.0,
-        Lane::Bottom => -128.0,
+        Lane::Top => 192.0,
+        Lane::UpperMid => 64.0,
+        Lane::LowerMid => -64.0,
+        Lane::Bottom => -192.0,
     }
 }
 
