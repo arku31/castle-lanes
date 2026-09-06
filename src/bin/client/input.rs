@@ -601,6 +601,7 @@ pub(crate) fn camera_controls(
     time: Res<Time>,
     windows: Query<&Window, With<PrimaryWindow>>,
     net: Res<ClientNet>,
+    state: Res<SnapshotState>,
     mut camera_home: ResMut<CameraHome>,
     mut camera_query: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
 ) {
