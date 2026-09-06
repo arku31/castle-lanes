@@ -79,6 +79,10 @@ pub(crate) fn receive_packets(
                     }
                 }
                 Ok(ServerPacket::Ack { seq: None }) => {}
+                Ok(ServerPacket::ProfileData { wins, losses }) => {
+                    net.profile_wins = wins;
+                    net.profile_losses = losses;
+                }
                 Ok(ServerPacket::Error { message }) => {
                     net.pending_placement = None;
                     net.status = message;

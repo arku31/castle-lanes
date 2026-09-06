@@ -114,6 +114,7 @@ fn main() -> std::io::Result<()> {
                         apply_snapshot_delta(snapshot, delta);
                     }
                     Ok(ServerPacket::Ack { .. }) => {}
+                    Ok(ServerPacket::ProfileData { .. }) => {}
                     Ok(ServerPacket::Error { message }) => {
                         eprintln!("Server error: {message}");
                     }

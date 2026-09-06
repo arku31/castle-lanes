@@ -102,6 +102,9 @@ struct ClientNet {
     next_seq: u32,
     pending_placement: Option<PendingPlacement>,
     is_replay: bool,
+    lobby_team_size: usize,
+    profile_wins: u32,
+    profile_losses: u32,
 }
 
 /// An unacknowledged placement intent, retried until acked or expired
@@ -239,6 +242,9 @@ fn run_replay(path: std::path::PathBuf) {
         next_seq: 0,
         pending_placement: None,
         is_replay: true,
+        lobby_team_size: 1,
+        profile_wins: 0,
+        profile_losses: 0,
     };
     // replay client: same window/UI/render stack, driven by the local sim
     App::new()
@@ -711,6 +717,9 @@ fn main() {
             next_seq: 1,
             pending_placement: None,
             is_replay: false,
+            lobby_team_size: 1,
+            profile_wins: 0,
+            profile_losses: 0,
         })
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()

@@ -157,6 +157,10 @@ pub enum ServerPacket {
         #[serde(default)]
         seq: Option<u32>,
     },
+    ProfileData {
+        wins: u32,
+        losses: u32,
+    },
     Error {
         message: String,
     },

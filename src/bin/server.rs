@@ -60,6 +60,10 @@ impl ProfileStore {
         self.profiles = profiles;
     }
 
+    fn get(&self, name: &str) -> Option<&PlayerProfile> {
+        self.profiles.get(name)
+    }
+
     fn record_result(&mut self, winner: &str, loser: &str) {
         let w = self.profiles.entry(winner.to_string()).or_insert_with(|| PlayerProfile {
             name: winner.to_string(),
@@ -140,6 +144,7 @@ fn main() -> std::io::Result<()> {
                         &mut rooms,
                         &mut clients,
                         &mut next_game_id,
+                        &profiles,
                         addr,
                         &buf[..len],
                     ) {
@@ -214,6 +219,7 @@ fn handle_packet(
     rooms: &mut HashMap<GameId, GameRoom>,
     clients: &mut HashMap<SocketAddr, ClientSession>,
     next_game_id: &mut GameId,
+    profiles: &ProfileStore,
     addr: SocketAddr,
     bytes: &[u8],
 ) -> Result<(), String> {
@@ -249,6 +255,16 @@ fn handle_packet(
                     },
                 );
             };
+            if let Some(profile) = profiles.get(name.as_str()) {
+                send_packet(
+                    socket,
+                    addr,
+                    &ServerPacket::ProfileData {
+                        wins: profile.wins,
+                        losses: profile.losses,
+                    },
+                )?;
+            }
             send_packet(socket, addr, &ServerPacket::Connected { name })?;
             send_balance(socket, addr, balance)?;
             send_game_list(socket, addr, rooms)?;

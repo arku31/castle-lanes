@@ -447,9 +447,14 @@ pub(crate) fn spawn_top_hud(
         40.0,
     );
     let race = selected_race(state, net);
+    let wl = if net.profile_wins > 0 || net.profile_losses > 0 {
+        format!("  ({}W/{})", net.profile_wins, net.profile_losses)
+    } else {
+        String::new()
+    };
     let left_label = race
-        .map(|race| format!("{}  {}", balance.race(race).name, net.player_name))
-        .unwrap_or_else(|| format!("Commander  {}", net.player_name));
+        .map(|race| format!("{}  {}{}", balance.race(race).name, net.player_name, wl))
+        .unwrap_or_else(|| format!("Commander  {}{}", net.player_name, wl));
     spawn_ui_label(
         commands,
         &left_label,
