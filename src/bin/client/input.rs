@@ -393,7 +393,7 @@ pub(crate) fn placement_input(
         return;
     };
 
-    let Some((lane, zone, cell)) = world_to_build_slot(team, world) else {
+    let Some((lane, zone, cell)) = world_to_build_slot(snapshot, player_id, team, world) else {
         return;
     };
     let balance = active_balance(&state);
@@ -517,7 +517,7 @@ pub(crate) fn update_placement_preview(
     };
 
     let balance = active_balance(&state);
-    let slot = world_to_build_slot(team, world);
+    let slot = world_to_build_slot(snapshot, player_id, team, world);
     let valid = slot.is_some_and(|(lane, zone, cell)| {
         can_place_building(&balance, snapshot, player_id, team, kind, lane, zone, cell)
     });
@@ -792,8 +792,29 @@ pub(crate) fn pick_world_object(
     None
 }
 
-pub(crate) fn world_to_build_slot(team: Team, world: Vec2) -> Option<(Lane, BuildZone, GridCell)> {
-    for lane in Lane::ALL {
+pub(crate) fn world_to_build_slot(
+    snapshot: &MatchSnapshot,
+    player_id: PlayerId,
+    team: Team,
+    world: Vec2,
+) -> Option<(Lane, BuildZone, GridCell)> {
+    // Team play: only the assigned lane is clickable
+    let team_size = snapshot.players.len() / 2;
+    let team_players: Vec<_> = snapshot
+        .players
+        .iter()
+        .filter(|p| p.team == team)
+        .collect();
+    let side_index = team_players
+        .iter()
+        .position(|p| snapshot.players.iter().any(|q| q.id == player_id && q.name == p.name))
+        .unwrap_or(0);
+    let lanes: Vec<Lane> = if team_size > 1 {
+        vec![Lane::for_player(team, side_index)]
+    } else {
+        Lane::ALL.to_vec()
+    };
+    for lane in lanes {
         for zone in BuildZone::ALL {
             for x in 0..GRID_W {
                 for y in 0..GRID_H {
