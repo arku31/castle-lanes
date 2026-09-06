@@ -29,6 +29,9 @@ fn main() {
     );
 
     let mut sim = GameSim::with_seed(BalanceConfig::load_or_default(balance_path), record.seed);
+    if record.players.len() > 2 {
+        sim.set_team_size(record.players.len() / 2).unwrap();
+    }
     // rebuild seats in recorded order
     let mut id_map: HashMap<u8, PlayerId> = HashMap::new();
     for (index, player) in record.players.iter().enumerate() {
