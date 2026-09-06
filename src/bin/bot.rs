@@ -86,6 +86,7 @@ fn main() -> std::io::Result<()> {
                                     &ClientPacket::CreateGame {
                                         name: format!("{}'s Game", options.name),
                                         team_size: options.team_size,
+                                        random_factions: false,
                                     },
                                 );
                             }

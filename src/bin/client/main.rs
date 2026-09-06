@@ -103,6 +103,7 @@ struct ClientNet {
     pending_placement: Option<PendingPlacement>,
     is_replay: bool,
     lobby_team_size: usize,
+    lobby_random_factions: bool,
     profile_wins: u32,
     profile_losses: u32,
 }
@@ -243,6 +244,7 @@ fn run_replay(path: std::path::PathBuf) {
         pending_placement: None,
         is_replay: true,
         lobby_team_size: 1,
+        lobby_random_factions: false,
         profile_wins: 0,
         profile_losses: 0,
     };
@@ -760,6 +762,7 @@ fn main() {
             pending_placement: None,
             is_replay: false,
             lobby_team_size: 1,
+            lobby_random_factions: false,
             profile_wins: 0,
             profile_losses: 0,
         })

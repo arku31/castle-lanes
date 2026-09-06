@@ -1159,6 +1159,9 @@ pub struct GameSim {
     pub balance: BalanceConfig,
     /// Players per side (1 = 1v1, 2 = 2v2, ...). Set at game creation.
     pub team_size: usize,
+    /// When enabled, races are randomly assigned at match start
+    /// (plan.md Phase 3 faction draft).
+    pub random_factions: bool,
     next_id: u64,
     seed: u64,
     rng_state: u64,
@@ -1197,6 +1200,7 @@ impl GameSim {
             message: "Waiting for two players.".to_string(),
             balance,
             team_size: 1,
+            random_factions: false,
             next_id: 1,
             seed,
             rng_state: mix_seed(seed),
@@ -1209,6 +1213,16 @@ impl GameSim {
         };
         sim.reset_match_state();
         sim
+    }
+
+    /// Enable random faction assignment at match start (plan.md Phase 3).
+    /// Must be called before any player joins.
+    pub fn set_random_factions(&mut self, enabled: bool) -> Result<(), String> {
+        if !self.players.is_empty() {
+            return Err("Cannot change random factions after players have joined.".to_string());
+        }
+        self.random_factions = enabled;
+        Ok(())
     }
 
     /// Set the players-per-side for team play. Must be called before any
@@ -1678,9 +1692,20 @@ impl GameSim {
                 .iter()
                 .all(|p| p.connected && p.ready && p.race.is_some())
         {
+            if self.random_factions {
+                let races = [RaceKind::Vanguard, RaceKind::Grove, RaceKind::Ember];
+                let mut rng_state = self.rng_state;
+                for player in &mut self.players {
+                    let index = (next_random_u32(&mut rng_state) as usize) % races.len();
+                    player.race = Some(races[index]);
+                }
+                self.rng_state = rng_state;
+                self.message = "Match started (random factions).".to_string();
+            } else {
+                self.message = "Match started.".to_string();
+            }
             self.reset_match_state();
             self.phase = MatchPhase::Playing;
-            self.message = "Match started.".to_string();
         }
     }
 

@@ -274,7 +274,7 @@ fn handle_packet(
             touch_lobby(clients, addr)?;
             send_game_list(socket, addr, rooms)?;
         }
-        ClientPacket::CreateGame { name, team_size } => {
+        ClientPacket::CreateGame { name, team_size, random_factions } => {
             touch_lobby(clients, addr)?;
             leave_room(rooms, clients, addr);
             remove_empty_rooms(rooms);
@@ -285,6 +285,9 @@ fn handle_packet(
             let mut sim = GameSim::with_seed(balance.clone(), seed);
             if let Some(ts) = team_size.filter(|ts| *ts >= 1 && *ts <= 4) {
                 sim.set_team_size(ts).ok();
+            }
+            if random_factions {
+                sim.set_random_factions(true).ok();
             }
             let mut room = GameRoom {
                 id: game_id,

@@ -29,6 +29,7 @@ pub(crate) fn menu_and_lobby_input(
                 &ClientPacket::CreateGame {
                     name: format!("{}'s Game", net.player_name),
                     team_size: None,
+                    random_factions: false,
                 },
             );
         }
@@ -40,6 +41,7 @@ pub(crate) fn menu_and_lobby_input(
                 &ClientPacket::CreateGame {
                     name: format!("{}'s Game", net.player_name),
                     team_size: None,
+                    random_factions: false,
                 },
             );
         }
@@ -238,6 +240,7 @@ pub(crate) fn ui_mouse_input(
                 &ClientPacket::CreateGame {
                     name: format!("{}'s Game", net.player_name),
                     team_size: None,
+                    random_factions: false,
                 },
             );
             return;

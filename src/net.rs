@@ -72,6 +72,8 @@ pub enum ClientPacket {
         name: String,
         #[serde(default)]
         team_size: Option<usize>,
+        #[serde(default)]
+        random_factions: bool,
     },
     JoinGame {
         game_id: GameId,
