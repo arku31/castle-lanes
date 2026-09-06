@@ -34,6 +34,11 @@ pub(crate) fn redraw_game_ui(
     let selected_race = selected_race(&state, &net);
     let race_popup_open = race_selection_popup_open(&state, &net);
     spawn_top_hud(&mut commands, &state, &net, &balance, &phase_line);
+    if let Some(snapshot) = &state.snapshot {
+        if snapshot.phase == MatchPhase::Playing || snapshot.phase == MatchPhase::GameOver {
+            spawn_team_scoreboard(&mut commands, snapshot, &balance);
+        }
+    }
 
     if state.snapshot.is_none() {
         spawn_bottom_console(&mut commands);
@@ -311,6 +316,95 @@ pub(crate) fn spawn_help_overlay(commands: &mut Commands, fonts: &FontAssets) {
         Anchor::CENTER,
         Justify::Center,
     );
+}
+
+/// Team scoreboard: shows all players with gold, army strength, and castle
+/// HP bars, grouped by side. Visible during matches with >2 players.
+fn spawn_team_scoreboard(
+    commands: &mut Commands,
+    snapshot: &MatchSnapshot,
+    balance: &BalanceConfig,
+) {
+    if snapshot.players.len() <= 2 {
+        return;
+    }
+    let panel_y = TOP_BAR_Y + 28.0;
+    let panel_h = 20.0 * snapshot.players.len() as f32 + 20.0;
+    spawn_ui_rect(
+        commands,
+        Vec2::new(0.0, panel_y),
+        Vec2::new(360.0, panel_h),
+        Color::srgba(0.04, 0.035, 0.03, 0.92),
+        42.0,
+    );
+    spawn_ui_rect(
+        commands,
+        Vec2::new(0.0, panel_y - panel_h * 0.5),
+        Vec2::new(360.0, 2.0),
+        Color::srgba(0.72, 0.52, 0.24, 0.6),
+        43.0,
+    );
+
+    let mut y_offset = panel_y - 8.0;
+    // Sort: Left players first, then Right players
+    let mut sorted: Vec<&_> = snapshot.players.iter().collect();
+    sorted.sort_by_key(|p| if p.team == Team::Left { 0 } else { 1 });
+    for player in &sorted {
+        let index = snapshot
+            .players
+            .iter()
+            .position(|p| p.id == player.id)
+            .unwrap_or(0);
+        let econ = &snapshot.economies.get(index);
+        let castle = &snapshot.castles.get(index);
+        let team_col = team_color(player.team);
+        let race_name = player
+            .race
+            .map(|r| balance.race(r).name.clone())
+            .unwrap_or_default();
+
+        // Player name + race + side
+        let side_label = if player.team == Team::Left { "L" } else { "R" };
+        spawn_ui_label(
+            commands,
+            &format!(
+                "[{}] {} ({}) {}g",
+                side_label,
+                player.name,
+                race_name,
+                econ.map(|e| e.gold).unwrap_or(0)
+            ),
+            Vec2::new(-170.0, y_offset),
+            11.0,
+            team_col,
+            44.0,
+            Anchor::CENTER_LEFT,
+            Justify::Left,
+        );
+
+        // Castle HP bar
+        if let Some(castle) = castle {
+            let pct = (castle.health.max(0) as f32 / castle.max_health.max(1) as f32).clamp(0.0, 1.0);
+            let bar_w = 80.0;
+            let bar_x = 80.0;
+            spawn_ui_rect(
+                commands,
+                Vec2::new(bar_x, y_offset),
+                Vec2::new(bar_w, 6.0),
+                Color::srgba(0.1, 0.09, 0.07, 0.9),
+                44.0,
+            );
+            spawn_ui_rect(
+                commands,
+                Vec2::new(bar_x - bar_w * 0.5 * (1.0 - pct), y_offset),
+                Vec2::new(bar_w * pct, 6.0),
+                team_col,
+                45.0,
+            );
+        }
+        y_offset += 16.0;
+    }
+    let _ = snapshot.castles;
 }
 
 pub(crate) fn spawn_top_hud(
