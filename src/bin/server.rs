@@ -7,6 +7,7 @@ use castle_lanes::record::{MatchRecorder, RecordedIntent, write_record};
 use castle_lanes::sim::{
     BalanceConfig, DEFAULT_BALANCE_PATH, GameSim, MatchPhase, MatchSnapshot, PlayerId,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::ErrorKind;
@@ -38,6 +39,44 @@ struct ClientSession {
     seen_enemy_buildings: HashMap<u64, castle_lanes::sim::Building>,
     /// Last successfully applied placement seq, for at-most-once retries.
     last_applied_seq: Option<u32>,
+}
+
+/// Per-player win/loss tracking persisted to profiles.json
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PlayerProfile {
+    name: String,
+    wins: u32,
+    losses: u32,
+    games_played: u32,
+}
+
+#[derive(Default)]
+struct ProfileStore {
+    profiles: HashMap<String, PlayerProfile>,
+}
+
+impl ProfileStore {
+    fn set_all(&mut self, profiles: HashMap<String, PlayerProfile>) {
+        self.profiles = profiles;
+    }
+
+    fn record_result(&mut self, winner: &str, loser: &str) {
+        let w = self.profiles.entry(winner.to_string()).or_insert_with(|| PlayerProfile {
+            name: winner.to_string(),
+            ..Default::default()
+        });
+        w.wins += 1;
+        w.games_played += 1;
+        let l = self.profiles.entry(loser.to_string()).or_insert_with(|| PlayerProfile {
+            name: loser.to_string(),
+            ..Default::default()
+        });
+        l.losses += 1;
+        l.games_played += 1;
+        if let Ok(json) = serde_json::to_string_pretty(&self.profiles) {
+            let _ = std::fs::write("profiles.json", json);
+        }
+    }
 }
 
 struct GameRoom {
@@ -78,6 +117,15 @@ fn main() -> std::io::Result<()> {
     let mut clients: HashMap<SocketAddr, ClientSession> = HashMap::new();
     let mut next_game_id: GameId = 1;
     let mut reconnect_deadlines: ReconnectDeadlines = HashMap::new();
+    let mut profiles: ProfileStore = {
+        let mut store = ProfileStore::default();
+        if let Ok(raw) = std::fs::read_to_string("profiles.json") {
+            if let Ok(parsed) = serde_json::from_str::<HashMap<String, PlayerProfile>>(&raw) {
+                store.set_all(parsed);
+            }
+        }
+        store
+    };
     let mut last_tick = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut buf = [0_u8; 4096];
@@ -120,6 +168,18 @@ fn main() -> std::io::Result<()> {
                             path.display()
                         ),
                         Err(err) => eprintln!("recording write failed: {err}"),
+                    }
+                    if let (Some(winner), Some(loser)) = (
+                        record
+                            .players
+                            .iter()
+                            .find(|p| Some(p.team) == record.winner),
+                        record
+                            .players
+                            .iter()
+                            .find(|p| Some(p.team) != record.winner),
+                    ) {
+                        profiles.record_result(&winner.name, &loser.name);
                     }
                 }
             }
