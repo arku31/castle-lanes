@@ -108,7 +108,19 @@ pub(crate) fn sync_static_scene(
             commands.entity(entity).despawn();
         }
         let lane_count = state.snapshot.as_ref().map(|s| s.players.len()).unwrap_or(2);
-        spawn_static_board(&mut commands, net.team, lane_count);
+        let assigned_lane = net
+            .player_id
+            .and_then(|pid| {
+                state.snapshot.as_ref().and_then(|s| {
+                    let side_index = s
+                        .players
+                        .iter()
+                        .filter(|p| Some(p.team) == net.team)
+                        .position(|p| p.id == pid);
+                    side_index.map(|idx| Lane::for_player(net.team.unwrap_or(Team::Left), idx))
+                })
+            });
+        spawn_static_board(&mut commands, net.team, lane_count, assigned_lane);
         if let Some(snapshot) = &state.snapshot {
             let balance = active_balance(&state);
             for building in &snapshot.buildings {
@@ -844,7 +856,12 @@ pub(crate) fn hash_unit(index: u32, salt: u32) -> f32 {
     (value as f32) / (u32::MAX as f32)
 }
 
-pub(crate) fn spawn_static_board(commands: &mut Commands, team: Option<Team>, lane_count: usize) {
+pub(crate) fn spawn_static_board(
+    commands: &mut Commands,
+    team: Option<Team>,
+    lane_count: usize,
+    assigned_lane: Option<Lane>,
+) {
     let mut spawned = Vec::new();
     let active_lanes = &Lane::ALL[..lane_count.min(Lane::ALL.len())];
     for lane in active_lanes {
@@ -871,13 +888,17 @@ pub(crate) fn spawn_static_board(commands: &mut Commands, team: Option<Team>, la
                 for x in 0..GRID_W {
                     for y in 0..GRID_H {
                         let pos = cell_to_world(side, lane, zone, GridCell { x, y });
-                        let color = if Some(side) == team {
+                        // Team play: dim lanes that aren't this player's assignment
+                        let wrong_lane = assigned_lane.is_some() && Some(side) == team && lane != assigned_lane.unwrap();
+                        let color = if Some(side) != team {
+                            Color::srgba(0.07, 0.06, 0.05, 0.20)
+                        } else if wrong_lane {
+                            Color::srgba(0.12, 0.10, 0.08, 0.10)
+                        } else {
                             match zone {
                                 BuildZone::Front => Color::srgba(0.26, 0.56, 0.72, 0.32),
                                 BuildZone::Back => Color::srgba(0.30, 0.42, 0.68, 0.22),
                             }
-                        } else {
-                            Color::srgba(0.07, 0.06, 0.05, 0.20)
                         };
                         spawned.push(spawn_rect(
                             commands,
