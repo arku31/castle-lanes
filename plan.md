@@ -3,7 +3,7 @@
 Status: **Phase 0 COMPLETE, Phase 1 COMPLETE (all 10 items), Phase 2 items 1-3 + 5-pilot + 8 + UI pass COMPLETE.**
 60 commits, 45 lib + 3 integration + 2 binary tests green, working tree clean.
 The critical Bevy asset-path fix made art render for the first time (verified via screenshots).
-13/26 sprite atlases done; auto-resume completes the rest at 2:26 AM.
+ALL 26 sprite atlases generated and sliced via codex exec pipeline.
 Grove-vs-Vanguard balance is structural — needs human playtest input (iteration 2 hypotheses in docs/balance-report.md).
 
 Phase 0 (all items): determinism + `sim_balance` harness, besieged regen + sudden-death ramp (`docs/balance-report.md`), persistent/interpolated rendering, team accent colors, procedural audio, help overlay + hints + counter tooltips, lightyear removed.
@@ -42,19 +42,19 @@ Phase 2 progress:
       each gain two branches (6 new buildings, 6 new units with abilities);
       UpgradeBuilding intent (v9), U/I keys, star marker, sell at upgraded value
 - [ ] Commander powers (item 4) — OPTIONAL, awaiting user keep/drop
-- [ ] Animation + projectile pass (item 5) — Vanguard ranged projectile
-      pilot DONE; multi-frame sprite generation still open
-- [ ] UI texture pass (item 5/7) — generated panel frames + display font
+- [x] Animation + projectile pass (item 5) — Vanguard projectile pilot + ALL
+      26 unit frame atlases generated via codex exec, sliced, wired (walk/attack/
+      death + death corpse). Grove/Ember included.
+- [x] UI texture pass (item 5/7) — beveled metal buttons, MedievalSharp display
+      font for headers, game-over overlay with stats and control hints
 - [x] Harness ability bots + lane-flip metric (item 8) — 'counter'
       archetype (typed damage vs dominant armor + splash vs swarms); lane-flip
       metric with 8s spawn attribution live in the report. KEY FINDING: with
       counter bots, Ember's 100% dominance collapses (Grove 70%, Vanguard 100%
       over Ember) - the earlier finding was confirmed a bot-meta artifact
-- [ ] Animation + projectile pass (item 5) — Vanguard ranged projectile
-      pilot DONE; multi-frame generation UNBLOCKED via `codex exec` (built-in
-      image tool, no API key - see docs/kb/image-generation.md): Guard atlas
-      generated + sliced, remaining 7 Vanguard units generating; TextureAtlas
-      playback (walk/attack/death + death corpse) wired in the client
+- [x] Animation + projectile pass (item 5) — ALL 26 unit frame atlases
+      generated and sliced; walk/attack/death + death corpse wired in the client.
+      See docs/kb/image-generation.md for the pipeline.
 
 Screenshots for the README remain blocked: ZCode needs Screen Recording permission (System Settings → Privacy & Security → Screen Recording → grant to ZCode Computer Use, then restart ZCode).
 Original baseline: commit `a79f462` + working tree (landed as `469d93d`).
