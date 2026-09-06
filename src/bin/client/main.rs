@@ -1059,6 +1059,8 @@ struct ClientSettings {
     muted: bool,
     fullscreen: bool,
     resolution_index: usize,
+    wins: u32,
+    losses: u32,
 }
 
 impl Default for ClientSettings {
@@ -1068,6 +1070,8 @@ impl Default for ClientSettings {
             muted: false,
             fullscreen: false,
             resolution_index: 2,
+            wins: 0,
+            losses: 0,
         }
     }
 }
@@ -1104,6 +1108,8 @@ impl ClientSettings {
             "muted": self.muted,
             "fullscreen": self.fullscreen,
             "resolution_index": self.resolution_index,
+            "wins": self.wins,
+            "losses": self.losses,
         });
         let _ = std::fs::write(Self::settings_path(), payload.to_string());
     }
