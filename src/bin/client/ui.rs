@@ -168,6 +168,25 @@ pub(crate) fn redraw_game_ui(
     if overlays.settings {
         spawn_settings_overlay(&mut commands, &settings, &fonts);
     }
+    if net.is_replay {
+        if let Some(snapshot) = &state.snapshot {
+            let horizon = state.balance.sudden_death_start.max(1.0);
+            let fraction = (snapshot.elapsed_secs / horizon).clamp(0.0, 1.0);
+            spawn_replay_progress_bar(&mut commands, fraction);
+            let bar_y = TOP_BAR_Y - 8.0;
+            let elapsed = format_match_time(snapshot.elapsed_secs);
+            spawn_ui_label(
+                &mut commands,
+                &format!("REPLAY   {}   [P]ause  [/] speed", elapsed),
+                Vec2::new(0.0, bar_y - 14.0),
+                12.0,
+                TEXT_PARCHMENT,
+                50.0,
+                Anchor::CENTER,
+                Justify::Center,
+            );
+        }
+    }
     spawn_match_hint(&mut commands, &state, &net, &mut hints);
 }
 
