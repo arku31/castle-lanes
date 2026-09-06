@@ -145,9 +145,16 @@ pub(crate) fn redraw_game_ui(
                 Anchor::CENTER,
                 Justify::Center,
             );
+            let record_note = if settings.wins > 0 || settings.losses > 0 {
+                format!("Your record: {}W/{}L   |   ", settings.wins, settings.losses)
+            } else {
+                String::new()
+            };
             spawn_ui_label(
                 &mut commands,
-                "R = rematch on both clients   |   H = rules   |   O = settings",
+                &format!(
+                    "{record_note}R = rematch   |   H = rules   |   O = settings"
+                ),
                 Vec2::new(0.0, 52.0),
                 12.0,
                 Color::srgba(0.6, 0.55, 0.45, 0.9),
