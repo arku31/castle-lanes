@@ -476,6 +476,21 @@ pub(crate) fn spawn_top_hud(
         Justify::Center,
     );
 
+    if net.is_replay {
+        // Replay mode badge already handled by the progress bar
+    } else if net.connected && net.player_id.is_none() && net.game_id.is_some() {
+        // Spectator: show badge
+        spawn_ui_label(
+            commands,
+            "SPECTATOR",
+            Vec2::new(-502.0, TOP_BAR_Y + 24.0),
+            14.0,
+            Color::srgb(0.7, 0.5, 0.2),
+            46.0,
+            Anchor::TOP_LEFT,
+            Justify::Left,
+        );
+    }
     if let (Some(snapshot), Some(player_id)) = (&state.snapshot, net.player_id) {
         if let Some(player) = current_player(snapshot, player_id) {
             let index = player_index_of(snapshot, player.id);
