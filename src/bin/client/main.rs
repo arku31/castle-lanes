@@ -42,17 +42,17 @@ const MAP_H: f32 = 560.0;
 
 const CELL: f32 = 38.0;
 
-const UI_PANEL_TOP_Y: f32 = -164.0;
+const UI_PANEL_TOP_Y: f32 = -205.0;
 
-const UI_PANEL_Y: f32 = -258.0;
+const UI_PANEL_Y: f32 = -322.0;
 
-const TOP_BAR_Y: f32 = 330.0;
+const TOP_BAR_Y: f32 = 412.0;
 
-const COMMAND_GRID_ORIGIN: Vec2 = Vec2::new(270.0, UI_PANEL_Y + 48.0);
+const COMMAND_GRID_ORIGIN: Vec2 = Vec2::new(350.0, UI_PANEL_Y + 60.0);
 
-const MINIMAP_CENTER: Vec2 = Vec2::new(-412.0, UI_PANEL_Y + 4.0);
+const MINIMAP_CENTER: Vec2 = Vec2::new(-520.0, UI_PANEL_Y + 5.0);
 
-const MINIMAP_SIZE: Vec2 = Vec2::new(184.0, 132.0);
+const MINIMAP_SIZE: Vec2 = Vec2::new(230.0, 165.0);
 
 const REVEAL_CASTLE_RADIUS: f32 = 430.0;
 
@@ -257,7 +257,7 @@ fn run_replay(path: std::path::PathBuf) {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: format!("Castle Lanes v{} - REPLAY", castle_lanes::VERSION),
-                        resolution: WindowResolution::new(1100, 720),
+                        resolution: WindowResolution::new(1600, 900),
                         resizable: true,
                         ..default()
                     }),
@@ -730,7 +730,7 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: format!("Castle Lanes v{}", castle_lanes::VERSION),
-                        resolution: WindowResolution::new(1100, 720),
+                        resolution: WindowResolution::new(1600, 900),
                         resizable: true,
                         ..default()
                     }),

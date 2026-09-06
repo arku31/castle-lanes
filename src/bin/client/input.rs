@@ -1,5 +1,8 @@
 //! input systems split out of the monolithic client (plan.md Phase 1 item 8).
 #![allow(unused_imports)]
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 pub(crate) use super::audio::*;
 pub(crate) use super::net::*;
 pub(crate) use super::scene::*;
@@ -628,6 +631,7 @@ pub(crate) fn update_world_hover(
 pub(crate) fn camera_controls(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    mut wheel_events: MessageReader<MouseWheel>,
     windows: Query<&Window, With<PrimaryWindow>>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
@@ -650,6 +654,18 @@ pub(crate) fn camera_controls(
                 .unwrap_or_else(|| home_camera_x(team, scale, windows.single().ok()));
             transform.translation.y = 0.0;
             camera_home.initialized_for = Some(team);
+        }
+    }
+
+    // Mouse wheel zoom
+    for wheel_event in wheel_events.read() {
+        let zoom_delta = if wheel_event.unit == MouseScrollUnit::Line {
+            wheel_event.y * 0.1
+        } else {
+            wheel_event.y * 0.01
+        };
+        if let Projection::Orthographic(orthographic) = projection.as_mut() {
+            orthographic.scale = (orthographic.scale - zoom_delta).clamp(0.3, 3.0);
         }
     }
 
