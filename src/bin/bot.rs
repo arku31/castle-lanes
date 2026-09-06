@@ -77,7 +77,7 @@ fn main() -> std::io::Result<()> {
                                 send(
                                     &socket,
                                     options.server_addr,
-                                    &ClientPacket::JoinGame { game_id: game.id },
+                                    &ClientPacket::JoinGame { game_id: game.id, spectator: false },
                                 );
                             } else {
                                 send(

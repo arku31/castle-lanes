@@ -55,7 +55,7 @@ pub(crate) fn menu_and_lobby_input(
         ] {
             if keys.just_pressed(key) {
                 if let Some(game) = state.games.get(idx) {
-                    send_client(&net, &ClientPacket::JoinGame { game_id: game.id });
+                    send_client(&net, &ClientPacket::JoinGame { game_id: game.id, spectator: false });
                 }
             }
         }
@@ -250,7 +250,7 @@ pub(crate) fn ui_mouse_input(
         for (idx, game) in state.games.iter().take(5).enumerate() {
             if point_in_rect(screen, lobby_game_row_center(idx), lobby_game_row_size()) {
                 sfx.push(Sfx::UiClick);
-                send_client(&net, &ClientPacket::JoinGame { game_id: game.id });
+                send_client(&net, &ClientPacket::JoinGame { game_id: game.id, spectator: false });
                 return;
             }
         }

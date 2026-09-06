@@ -325,7 +325,7 @@ fn join_game(
     server_addr: SocketAddr,
     game_id: castle_lanes::net::GameId,
 ) -> castle_lanes::sim::PlayerInfo {
-    send(socket, server_addr, &ClientPacket::JoinGame { game_id });
+    send(socket, server_addr, &ClientPacket::JoinGame { game_id, spectator: false });
     wait_for_welcome(socket, Duration::from_secs(3))
 }
 

@@ -75,6 +75,9 @@ pub enum ClientPacket {
     },
     JoinGame {
         game_id: GameId,
+        /// Join as a read-only spectator (no seat consumed).
+        #[serde(default)]
+        spectator: bool,
     },
     LeaveGame,
     SetReady {

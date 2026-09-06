@@ -276,18 +276,18 @@ fn handle_packet(
                 clients: HashSet::new(),
                 recorder: MatchRecorder::new(game_id),
             };
-            join_room(socket, clients, addr, &mut room, balance)?;
+            join_room(socket, clients, addr, &mut room, balance, false)?;
             rooms.insert(game_id, room);
             broadcast_game_lists(socket, rooms, clients);
         }
-        ClientPacket::JoinGame { game_id } => {
+        ClientPacket::JoinGame { game_id, spectator } => {
             touch_lobby(clients, addr)?;
             leave_room(rooms, clients, addr);
             remove_empty_rooms(rooms);
             let room = rooms
                 .get_mut(&game_id)
                 .ok_or_else(|| "That game no longer exists.".to_string())?;
-            join_room(socket, clients, addr, room, balance)?;
+            join_room(socket, clients, addr, room, balance, spectator)?;
             broadcast_game_lists(socket, rooms, clients);
         }
         ClientPacket::LeaveGame => {
@@ -532,10 +532,39 @@ fn join_room(
     addr: SocketAddr,
     room: &mut GameRoom,
     balance: &BalanceConfig,
+    spectator: bool,
 ) -> Result<(), String> {
     let session = clients
         .get_mut(&addr)
         .ok_or_else(|| "Join the lobby server first.".to_string())?;
+    if spectator {
+        // Read-only spectator: no seat consumed, receives one side's
+        // filtered snapshot (Left by default) for viewing.
+        room.clients.insert(addr);
+        session.game_id = Some(room.id);
+        session.player_id = None;
+        session.last_snapshot = None;
+        session.seen_enemy_buildings.clear();
+        session.last_seen = Instant::now();
+        send_packet(
+            socket,
+            addr,
+            &ServerPacket::Welcome {
+                game_id: room.id,
+                player: castle_lanes::sim::PlayerInfo {
+                    id: PlayerId(0),
+                    name: format!("{} (spectator)", session.name),
+                    team: castle_lanes::sim::Team::Left,
+                    race: None,
+                    ready: false,
+                    connected: true,
+                    rematch_vote: false,
+                },
+            },
+        )?;
+        send_balance(socket, addr, balance)?;
+        return Ok(());
+    }
     let player = room.sim.join_or_update_player(session.name.clone())?;
     room.clients.insert(addr);
     session.game_id = Some(room.id);
