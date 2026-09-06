@@ -438,6 +438,20 @@ pub(crate) fn can_place_building(
     zone: BuildZone,
     cell: GridCell,
 ) -> bool {
+    // Team play: each player builds only in their assigned lane
+    let player_index = snapshot
+        .players
+        .iter()
+        .position(|p| p.id == player_id)
+        .unwrap_or(0);
+    let team_size = snapshot.players.len() / 2;
+    if team_size > 1 {
+        let side_index = player_index % team_size;
+        let assigned = Lane::for_player(team, side_index);
+        if lane != assigned {
+            return false;
+        }
+    }
     let occupied = snapshot.buildings.iter().any(|building| {
         side_of_player(snapshot, building.owner) == team
             && building.lane == lane
