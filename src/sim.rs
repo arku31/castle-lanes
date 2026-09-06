@@ -119,7 +119,8 @@ impl Lane {
             (Team::Left, 1) => Lane::UpperMid,
             (Team::Left, _) => Lane::LowerMid,
             (Team::Right, 0) => Lane::Bottom,
-            (Team::Right, _) => Lane::LowerMid,
+            (Team::Right, 1) => Lane::LowerMid,
+            (Team::Right, _) => Lane::Bottom,
         }
     }
 }
@@ -1161,6 +1162,8 @@ pub struct GameSim {
     castle_regen_accum: Vec<f32>,
     castle_regen_delay_timer: Vec<f32>,
     overtime_damage_accum: [f32; 2],
+    /// Lane assigned to each player (parallel to players vec).
+    pub assigned_lanes: Vec<Lane>,
 }
 
 impl Default for GameSim {
@@ -1196,6 +1199,7 @@ impl GameSim {
             elapsed_secs: 0.0,
             castle_regen_accum: Vec::new(),
             castle_regen_delay_timer: Vec::new(),
+            assigned_lanes: Vec::new(),
             overtime_damage_accum: [0.0, 0.0],
         };
         sim.reset_match_state();
@@ -1337,6 +1341,13 @@ impl GameSim {
             gold: self.balance.starting_gold,
             income: self.balance.base_income,
         });
+        // Lane assignment: player k on each side gets lane k.
+        // For 1v1 (team_size 1): Left P0 -> Top, Right P0 -> Bottom.
+        // For 2v2 (team_size 2): Left P0 -> Top, Left P1 -> UpperMid,
+        //   Right P0 -> Bottom, Right P1 -> LowerMid.
+        let side_index = self.players.iter().filter(|p| p.team == team).count();
+        let lane = Lane::for_player(team, side_index);
+        self.assigned_lanes.push(lane);
         let castle_health = self.balance.race(RaceKind::Vanguard).castle_health;
         self.castles.push(Castle {
             owner: player.id,
@@ -1669,6 +1680,7 @@ impl GameSim {
                 income: self.balance.base_income,
             })
             .collect();
+        // assigned_lanes persist across matches (assigned at join time)
         self.castles = self
             .players
             .iter()
