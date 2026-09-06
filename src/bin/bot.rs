@@ -85,7 +85,7 @@ fn main() -> std::io::Result<()> {
                                     options.server_addr,
                                     &ClientPacket::CreateGame {
                                         name: format!("{}'s Game", options.name),
-                                        team_size: None,
+                                        team_size: options.team_size,
                                     },
                                 );
                             }
@@ -228,6 +228,9 @@ struct BotOptions {
     name: String,
     race: RaceKind,
     building: BuildingKind,
+    /// Non-zero enables team play: the first bot creates a game with this
+    /// team size and bots fill seats until the lobby is full.
+    team_size: Option<usize>,
 }
 
 fn parse_args() -> BotOptions {
@@ -235,6 +238,7 @@ fn parse_args() -> BotOptions {
     let mut name = "Bot".to_string();
     let mut race = RaceKind::Vanguard;
     let mut building = None;
+    let mut team_size = None;
     let mut legacy_json = false;
     let args: Vec<String> = env::args().collect();
     let mut idx = 1;
@@ -260,6 +264,15 @@ fn parse_args() -> BotOptions {
                 race = parse_race(&args[idx + 1]);
                 idx += 1;
             }
+            "--team-size" if idx + 1 < args.len() => {
+                team_size = Some(
+                    args[idx + 1]
+                        .parse::<usize>()
+                        .expect("--team-size must be a number (1-4)")
+                        .clamp(1, 4),
+                );
+                idx += 1;
+            }
             _ => {}
         }
         idx += 1;
@@ -270,6 +283,7 @@ fn parse_args() -> BotOptions {
         name,
         race,
         building: building.unwrap_or_else(|| default_building_for_race(race)),
+        team_size,
     }
 }
 

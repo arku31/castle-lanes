@@ -808,7 +808,7 @@ pub struct BuildingConfig {
 /// serde-defaulted so balance.json can omit any field; a unit has at most
 /// one ability.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum AbilityConfig {
     /// Heals the most-wounded allied unit in range instead of attacking.
     Heal {
