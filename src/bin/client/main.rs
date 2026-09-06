@@ -194,9 +194,7 @@ fn run_replay(path: std::path::PathBuf) {
     );
 
     let mut sim = castle_lanes::sim::GameSim::with_seed(
-        castle_lanes::sim::BalanceConfig::load_or_default(
-            castle_lanes::sim::DEFAULT_BALANCE_PATH,
-        ),
+        castle_lanes::sim::BalanceConfig::load_or_default(castle_lanes::sim::DEFAULT_BALANCE_PATH),
         record.seed,
     );
     // Rebuild seats in recorded order so PlayerIds match the command log.
@@ -213,11 +211,7 @@ fn run_replay(path: std::path::PathBuf) {
 
     let player = ReplayPlayer {
         sim,
-        commands: record
-            .commands
-            .iter()
-            .cloned()
-            .collect(),
+        commands: record.commands.iter().cloned().collect(),
         next_command: 0,
         paused: false,
         accumulator: 0.0,
@@ -252,10 +246,7 @@ fn run_replay(path: std::path::PathBuf) {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: format!(
-                            "Castle Lanes v{} - REPLAY",
-                            castle_lanes::VERSION
-                        ),
+                        title: format!("Castle Lanes v{} - REPLAY", castle_lanes::VERSION),
                         resolution: WindowResolution::new(1100, 720),
                         resizable: true,
                         ..default()
@@ -264,9 +255,7 @@ fn run_replay(path: std::path::PathBuf) {
                 })
                 .set(AssetPlugin {
                     file_path: std::env::current_dir()
-                        .map(|cwd| {
-                            cwd.join("assets").to_string_lossy().to_string()
-                        })
+                        .map(|cwd| cwd.join("assets").to_string_lossy().to_string())
                         .unwrap_or_else(|_| "assets".to_string()),
                     ..default()
                 }),
@@ -650,9 +639,9 @@ fn apply_recorded_intent(
         RecordedIntent::SellBuilding { building_id, .. } => {
             sim.sell_building(player_id, *building_id)
         }
-        RecordedIntent::UpgradeBuilding { building_id, to, .. } => {
-            sim.upgrade_building(player_id, *building_id, *to)
-        }
+        RecordedIntent::UpgradeBuilding {
+            building_id, to, ..
+        } => sim.upgrade_building(player_id, *building_id, *to),
         RecordedIntent::Surrender => sim.surrender(player_id),
         RecordedIntent::VoteRematch => {
             sim.vote_rematch(player_id);

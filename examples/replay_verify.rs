@@ -4,7 +4,7 @@
 //!   cargo run --release --example replay_verify -- <recording.json> [balance.json]
 //! The balance.json must match the config the recording was made with.
 
-use castle_lanes::record::{load_record, RecordedIntent};
+use castle_lanes::record::{RecordedIntent, load_record};
 use castle_lanes::sim::{
     BalanceConfig, BuildZone, BuildingKind, DEFAULT_BALANCE_PATH, GameSim, GridCell, Lane,
     PlayerId, RaceKind,
@@ -13,8 +13,13 @@ use std::collections::HashMap;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).expect("usage: replay_verify <recording.json> [balance.json]");
-    let balance_path = args.get(2).map(|s| s.as_str()).unwrap_or(DEFAULT_BALANCE_PATH);
+    let path = args
+        .get(1)
+        .expect("usage: replay_verify <recording.json> [balance.json]");
+    let balance_path = args
+        .get(2)
+        .map(|s| s.as_str())
+        .unwrap_or(DEFAULT_BALANCE_PATH);
     let record = castle_lanes::record::load_record(path).expect("load recording");
     println!(
         "replaying {} (seed {}, {} commands)",
@@ -23,10 +28,7 @@ fn main() {
         record.commands.len()
     );
 
-    let mut sim = GameSim::with_seed(
-        BalanceConfig::load_or_default(balance_path),
-        record.seed,
-    );
+    let mut sim = GameSim::with_seed(BalanceConfig::load_or_default(balance_path), record.seed);
     // rebuild seats in recorded order
     let mut id_map: HashMap<u8, PlayerId> = HashMap::new();
     for (index, player) in record.players.iter().enumerate() {
@@ -54,14 +56,21 @@ fn main() {
         let result = match &command.intent {
             RecordedIntent::SetRace { race } => sim.set_race(player_id, *race).map(|_| ()),
             RecordedIntent::SetReady { ready } => sim.set_ready(player_id, *ready),
-            RecordedIntent::PlaceBuilding { kind, lane, zone, cell } => sim
-                .place_building(
-                    player_id,
-                    *kind,
-                    *lane,
-                    *zone,
-                    GridCell { x: cell.x, y: cell.y },
-                ),
+            RecordedIntent::PlaceBuilding {
+                kind,
+                lane,
+                zone,
+                cell,
+            } => sim.place_building(
+                player_id,
+                *kind,
+                *lane,
+                *zone,
+                GridCell {
+                    x: cell.x,
+                    y: cell.y,
+                },
+            ),
             RecordedIntent::SellBuilding { building_id } => {
                 sim.sell_building(player_id, *building_id)
             }

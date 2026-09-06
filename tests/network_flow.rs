@@ -314,6 +314,7 @@ fn create_game(
         server_addr,
         &ClientPacket::CreateGame {
             name: name.to_string(),
+            team_size: None,
         },
     );
     wait_for_welcome(socket, Duration::from_secs(3))
