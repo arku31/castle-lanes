@@ -108,6 +108,7 @@ fn main() -> std::io::Result<()> {
                         | ServerPacket::BalanceBuildings { .. }
                         | ServerPacket::BalanceUnits { .. },
                     ) => {}
+                    Ok(ServerPacket::QueueStatus { .. }) => {}
                     Ok(ServerPacket::Snapshot(next_snapshot)) => {
                         snapshot = Some(next_snapshot);
                     }

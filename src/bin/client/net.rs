@@ -83,6 +83,12 @@ pub(crate) fn receive_packets(
                     net.profile_wins = wins;
                     net.profile_losses = losses;
                 }
+                Ok(ServerPacket::QueueStatus { queued, needed, team_size }) => {
+                    net.status = format!(
+                        "Queued {}v{}: {}/{} players. Waiting...",
+                        team_size, team_size, queued, needed
+                    );
+                }
                 Ok(ServerPacket::Error { message }) => {
                     net.pending_placement = None;
                     net.status = message;

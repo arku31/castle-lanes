@@ -104,6 +104,7 @@ struct ClientNet {
     is_replay: bool,
     lobby_team_size: usize,
     lobby_random_factions: bool,
+    queued_for_match: bool,
     profile_wins: u32,
     profile_losses: u32,
 }
@@ -245,6 +246,7 @@ fn run_replay(path: std::path::PathBuf) {
         is_replay: true,
         lobby_team_size: 1,
         lobby_random_factions: false,
+        queued_for_match: false,
         profile_wins: 0,
         profile_losses: 0,
     };
@@ -763,6 +765,7 @@ fn main() {
             is_replay: false,
             lobby_team_size: 1,
             lobby_random_factions: false,
+            queued_for_match: false,
             profile_wins: 0,
             profile_losses: 0,
         })
