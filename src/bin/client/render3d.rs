@@ -25,6 +25,7 @@ use bevy::light::{
 use bevy::mesh::{Mesh3d, PrimitiveTopology};
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::render::alpha::AlphaMode;
+use bevy::scene::SceneRoot;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -43,7 +44,7 @@ pub(crate) fn is_3d() -> bool {
 /// Camera pitch (plan-0.2.md §6) and the base distance that reproduces the
 /// v0.1 ortho scale 1.0 vertical coverage at fov 40°.
 const CAM_PITCH_DEG: f32 = 50.0;
-const CAM_BASE_DIST: f32 = 1240.0;
+const CAM_BASE_DIST: f32 = 980.0;
 const CAM_ZOOM_MIN: f32 = 0.35;
 const CAM_ZOOM_MAX: f32 = 2.4;
 const CAM_FOV_DEG: f32 = 40.0;
@@ -115,6 +116,185 @@ pub(crate) fn world2_to_3d(pos: Vec2) -> Vec3 {
     Vec3::new(pos.x, ground_height(pos.x, pos.y), -pos.y)
 }
 
+/// glTF scenes built by tools/blender (plan-0.2.md §5). Missing or
+/// still-loading models fall back to the sprite billboards.
+#[derive(Resource, Default)]
+pub(crate) struct ModelAssets {
+    pub buildings: HashMap<String, Handle<Scene>>,
+    pub units: HashMap<String, Handle<Scene>>,
+    pub castles: HashMap<String, Handle<Scene>>,
+}
+
+pub(crate) const VANGUARD_BUILDING_MODELS: [&str; 8] = [
+    "vanguard_barracks",
+    "vanguard_range_tower",
+    "vanguard_forge",
+    "vanguard_pike_yard",
+    "vanguard_bulwark_hall",
+    "vanguard_chapel",
+    "vanguard_stables",
+    "vanguard_siege_workshop",
+];
+
+pub(crate) const VANGUARD_UNIT_MODELS: [&str; 7] = [
+    "vanguard_guard",
+    "vanguard_archer",
+    "vanguard_pikeman",
+    "vanguard_shieldbearer",
+    "vanguard_battle_cleric",
+    "vanguard_lancer",
+    "vanguard_ballista",
+];
+
+pub(crate) fn setup_models(mut commands: Commands, assets: AssetServer) {
+    let mut models = ModelAssets::default();
+    for name in VANGUARD_BUILDING_MODELS {
+        models.buildings.insert(
+            name.to_string(),
+            assets.load(format!("models/vanguard/{name}.glb#Scene0")),
+        );
+    }
+    for name in VANGUARD_UNIT_MODELS {
+        models.units.insert(
+            name.to_string(),
+            assets.load(format!("models/vanguard/{name}.glb#Scene0")),
+        );
+    }
+    models.castles.insert(
+        "vanguard_castle".to_string(),
+        assets.load("models/vanguard/vanguard_castle.glb#Scene0"),
+    );
+    commands.insert_resource(models);
+}
+
+/// `VanguardBarracks` -> `vanguard_barracks` (Blender manifest naming).
+fn snake_case(debug_name: &str) -> String {
+    let mut out = String::with_capacity(debug_name.len() + 4);
+    for (i, ch) in debug_name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.extend(ch.to_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Model name for a building kind (upgrade branches reuse their base).
+fn building_model_name(kind: BuildingKind) -> String {
+    let base = match kind {
+        BuildingKind::VanguardArbalestTower => "vanguard_range_tower",
+        BuildingKind::VanguardArcaneSpire => "vanguard_chapel",
+        BuildingKind::GroveBrambleWarren => "grove_root_den",
+        BuildingKind::GroveSpitefen => "grove_thorn_spire",
+        BuildingKind::EmberMagmaForge => "ember_cinder_pit",
+        BuildingKind::EmberAshPack => "ember_flame_spire",
+        _ => return snake_case(&format!("{kind:?}")),
+    };
+    base.to_string()
+}
+
+fn unit_model_name(kind: UnitKind) -> Option<String> {
+    // Upgrade units reuse their base model (documented in assets.md).
+    let base = match kind {
+        UnitKind::VanguardArbalester => UnitKind::VanguardArcher,
+        UnitKind::VanguardArcanist => UnitKind::VanguardBattleCleric,
+        _ => kind,
+    };
+    let name = snake_case(&format!("{base:?}"));
+    (VANGUARD_UNIT_MODELS.contains(&name.as_str())).then_some(name)
+}
+
+/// Client-side placement effects: recent placement cells drive both the
+/// animated build circle and the scaffold window on fresh buildings
+/// (plan-0.2.md §7.3).
+#[derive(Resource, Default)]
+pub(crate) struct BuildFx {
+    pub placements: Vec<(Team, Lane, BuildZone, GridCell, f32)>,
+}
+
+impl BuildFx {
+    /// True while the given cell's building should show its scaffold.
+    pub fn under_construction(
+        &self,
+        team: Team,
+        lane: Lane,
+        zone: BuildZone,
+        cell: GridCell,
+        now: f32,
+    ) -> bool {
+        self.placements.iter().any(|(t, l, z, c, at)| {
+            *t == team && *l == lane && *z == zone && *c == cell && now - *at < 3.0
+        })
+    }
+}
+
+/// Records a placement intent for the animated build circle; called from
+/// `placement_input` when the server-bound intent is sent.
+pub(crate) fn note_placement(
+    fx: &mut BuildFx,
+    time: f32,
+    team: Team,
+    lane: Lane,
+    zone: BuildZone,
+    cell: GridCell,
+) {
+    fx.placements.push((team, lane, zone, cell, time));
+}
+
+/// Animated WC3-style build circle: an expanding, fading ring on the ground.
+pub(crate) fn update_build_fx(
+    mut commands: Commands,
+    mut fx: ResMut<BuildFx>,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut world_assets: ResMut<World3dAssets>,
+) {
+    let now = time.elapsed_secs();
+    // Circles live 0.6 s; scaffold lookup keeps 3 s of placement history.
+    fx.placements.retain(|(_, _, _, _, at)| now - *at < 3.0);
+    let fresh: Vec<_> = fx
+        .placements
+        .iter()
+        .filter(|(_, _, _, _, at)| now - *at < 0.6)
+        .copied()
+        .collect();
+    if fresh.is_empty() {
+        return;
+    }
+    let mut res = Res3d {
+        meshes: &mut meshes,
+        materials: &mut materials,
+        assets: &mut world_assets,
+    };
+    for (team, lane, zone, cell, at) in fresh {
+        let t = ((now - at) / 0.6).clamp(0.0, 1.0);
+        let pos = cell_to_world(team, lane, zone, cell);
+        let base = world2_to_3d(pos);
+        let alpha = (1.0 - t) * 0.9;
+        let ring = res.ring_texture();
+        let mat = res.materials.add(StandardMaterial {
+            base_color: team_color(team).with_alpha(alpha),
+            base_color_texture: Some(ring),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            ..default()
+        });
+        let size = 10.0 + t * (CELL * 1.2);
+        commands.spawn((
+            Mesh3d(res.flat_quad(size, size)),
+            MeshMaterial3d(mat),
+            Transform::from_translation(base + Vec3::Y * 0.8),
+            NotShadowCaster,
+        ));
+    }
+}
+
 /// Shared meshes/materials for everything billboard-shaped, cached by size
 /// (quantized to 0.25) and color so batching stays effective.
 #[derive(Resource, Default)]
@@ -123,6 +303,10 @@ pub(crate) struct World3dAssets {
     stand_quads: HashMap<(u32, u32), Handle<Mesh>>,
     flat_mats: HashMap<u64, Handle<StandardMaterial>>,
     tex_mats: HashMap<u64, Handle<StandardMaterial>>,
+    tile_mesh: Option<Handle<Mesh>>,
+    tile_texture: Option<Handle<Image>>,
+    tile_mats: HashMap<u64, Handle<StandardMaterial>>,
+    ring_texture: Option<Handle<Image>>,
 }
 
 /// Bundle of mutable asset accesses shared by the spawn helpers.
@@ -186,6 +370,44 @@ impl<'a> Res3d<'a> {
 
     pub(crate) fn flat_mat(&mut self, color: Color) -> Handle<StandardMaterial> {
         cached_flat_mat(self.materials, self.assets, color)
+    }
+
+    /// Beveled build-footprint tile (shared mesh created at startup,
+    /// per-tint material).
+    pub(crate) fn tile_quad(&mut self) -> Handle<Mesh> {
+        self.assets.tile_mesh.as_ref().expect("tile mesh").clone()
+    }
+
+    pub(crate) fn ring_texture(&mut self) -> Handle<Image> {
+        self.assets
+            .ring_texture
+            .as_ref()
+            .expect("ring texture")
+            .clone()
+    }
+
+    pub(crate) fn tile_mat(&mut self, tint: Color) -> Handle<StandardMaterial> {
+        let key = color_key(tint);
+        let texture = self
+            .assets
+            .tile_texture
+            .as_ref()
+            .expect("tile texture")
+            .clone();
+        self.assets
+            .tile_mats
+            .entry(key)
+            .or_insert_with(|| {
+                self.materials.add(StandardMaterial {
+                    base_color: tint,
+                    base_color_texture: Some(texture),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    cull_mode: None,
+                    ..default()
+                })
+            })
+            .clone()
     }
 
     pub(crate) fn tex_mat(
@@ -323,6 +545,11 @@ pub(crate) fn setup_3d_world(
     if !is_3d() {
         return;
     }
+    // Shared build-footprint tile (beveled, textured) for the placement UI.
+    world_assets.tile_mesh = Some(meshes.add(tile_mesh()));
+    world_assets.tile_texture = Some(images.add(footprint_tile_texture()));
+    world_assets.ring_texture = Some(images.add(ring_texture()));
+
     let mut res = Res3d {
         meshes: &mut meshes,
         materials: &mut materials,
@@ -346,8 +573,8 @@ pub(crate) fn setup_3d_world(
         // Camera-attached ambient override (bevy 0.18: AmbientLight is a
         // component on a camera), tuned warm for the outdoor scene.
         AmbientLight {
-            color: Color::srgb(0.78, 0.84, 0.95),
-            brightness: 420.0,
+            color: Color::srgb(0.80, 0.86, 1.00),
+            brightness: 700.0,
             affects_lightmapped_meshes: true,
         },
     ));
@@ -356,7 +583,7 @@ pub(crate) fn setup_3d_world(
     // light is the visual-consistency anchor (plan-0.2.md §6).
     commands.spawn((
         DirectionalLight {
-            illuminance: 9000.0,
+            illuminance: 15000.0,
             shadows_enabled: true,
             ..default()
         },
@@ -371,6 +598,76 @@ pub(crate) fn setup_3d_world(
     commands.insert_resource(DirectionalLightShadowMap { size: 2048 });
 
     spawn_terrain(&mut commands, &mut res, &mut images);
+}
+
+/// Flat XZ quad with UVs for the footprint tile texture.
+fn tile_mesh() -> Mesh {
+    let hw = (CELL - 2.0) * 0.5;
+    let mut mesh = quad_mesh(CELL - 2.0, CELL - 2.0, QuadPlane::Ground);
+    // quad_mesh already emits UVs; texture spacing handles the bevel.
+    let _ = (hw, &mut mesh);
+    mesh
+}
+
+/// Bright ring on transparent ground, used by the build circle.
+fn ring_texture() -> Image {
+    const S: usize = 64;
+    let mut data = Vec::with_capacity(S * S * 4);
+    for py in 0..S {
+        for px in 0..S {
+            let dx = px as f32 / (S - 1) as f32 - 0.5;
+            let dy = py as f32 / (S - 1) as f32 - 0.5;
+            let d = (dx * dx + dy * dy).sqrt() * 2.0; // 0 center, 1 edge
+            let ring = 1.0 - smoothstep(0.72, 0.95, d);
+            let alpha = smoothstep(0.55, 0.8, d) * ring;
+            data.extend([255, 235, 170, (alpha * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        bevy::render::render_resource::Extent3d {
+            width: S as u32,
+            height: S as u32,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        data,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+/// Soft beveled square with a bright inner inset, alpha outside.
+fn footprint_tile_texture() -> Image {
+    const S: usize = 64;
+    let mut data = Vec::with_capacity(S * S * 4);
+    for py in 0..S {
+        for px in 0..S {
+            let x = px as f32 / (S - 1) as f32;
+            let y = py as f32 / (S - 1) as f32;
+            let edge = x.min(y).min(1.0 - x).min(1.0 - y); // 0 at border
+            let border = smoothstep(0.0, 0.08, edge); // frame
+            let inset = smoothstep(0.12, 0.30, edge); // inner fill window
+            let alpha = 0.95 * border.max(0.55 * inset);
+            let bright = 1.0 + 0.35 * (1.0 - inset);
+            data.extend([
+                ((1.0 * bright).min(1.0) * 255.0) as u8,
+                ((1.0 * bright).min(1.0) * 255.0) as u8,
+                (1.0 * 255.0) as u8,
+                (alpha * 255.0) as u8,
+            ]);
+        }
+    }
+    Image::new(
+        bevy::render::render_resource::Extent3d {
+            width: S as u32,
+            height: S as u32,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        data,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    )
 }
 
 fn spawn_terrain(commands: &mut Commands, res: &mut Res3d, images: &mut Assets<Image>) {
@@ -544,10 +841,15 @@ pub(crate) fn sync_static_3d(
     mut commands: Commands,
     mut registry: ResMut<SceneRegistry>,
     statics: Query<Entity, With<StaticScene>>,
+    models: Res<ModelAssets>,
+    scenes: Res<Assets<Scene>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
     building_icons: Res<BuildingIconAssets>,
+    selection: Res<BuildSelection>,
+    build_fx: Res<BuildFx>,
+    time: Res<Time>,
     state: Res<SnapshotState>,
     net: Res<ClientNet>,
     fog: Res<FogMemory>,
@@ -578,7 +880,11 @@ pub(crate) fn sync_static_3d(
                 side_index.map(|idx| Lane::for_player(net.team.unwrap_or(Team::Left), idx))
             })
         });
-        spawn_zone_tiles_3d(&mut commands, &mut res, net.team, lane_count, assigned_lane);
+        // M1 §7: the grid only exists while placing; the idle map reads via
+        // roads and terrace trim alone.
+        if selection.kind.is_some() {
+            spawn_zone_tiles_3d(&mut commands, &mut res, net.team, lane_count, assigned_lane);
+        }
         if let Some(snapshot) = &state.snapshot {
             for building in &snapshot.buildings {
                 let side = side_of_player(snapshot, building.owner);
@@ -588,13 +894,36 @@ pub(crate) fn sync_static_3d(
                     }
                     continue;
                 }
-                spawn_building_3d(&mut commands, &mut res, building, side, &building_icons);
+                spawn_building_3d(
+                    &mut commands,
+                    &mut res,
+                    &models,
+                    &scenes,
+                    building,
+                    side,
+                    &building_icons,
+                    build_fx.under_construction(
+                        side,
+                        building.lane,
+                        building.zone,
+                        building.cell,
+                        time.elapsed_secs(),
+                    ),
+                );
             }
             for castle in &snapshot.castles {
                 if !is_castle_visible(snapshot, net.team, castle.team) {
                     continue;
                 }
-                spawn_castle_3d(&mut commands, &mut res, castle, snapshot, &building_icons);
+                spawn_castle_3d(
+                    &mut commands,
+                    &mut res,
+                    &models,
+                    &scenes,
+                    castle,
+                    snapshot,
+                    &building_icons,
+                );
             }
         }
     }
@@ -636,6 +965,9 @@ fn spawn_zone_tiles_3d(
     lane_count: usize,
     assigned_lane: Option<Lane>,
 ) {
+    let tint = team
+        .map(team_color)
+        .unwrap_or(Color::srgb(0.30, 0.50, 0.80));
     for side in visible_sides(team) {
         for lane in &Lane::ALL[..lane_count.min(Lane::ALL.len())] {
             for zone in BuildZone::ALL {
@@ -645,18 +977,14 @@ fn spawn_zone_tiles_3d(
                         let wrong_lane = assigned_lane.is_some()
                             && Some(side) == team
                             && *lane != assigned_lane.unwrap();
-                        let base = match zone {
-                            BuildZone::Front => Color::srgba(0.25, 0.48, 0.75, 0.14),
-                            BuildZone::Back => Color::srgba(0.30, 0.36, 0.68, 0.10),
-                        };
                         let color = if wrong_lane {
-                            base.with_alpha(0.04)
+                            tint.with_alpha(0.05)
                         } else {
-                            base
+                            tint.with_alpha(0.42)
                         };
                         commands.spawn((
-                            Mesh3d(res.flat_quad(CELL - 4.0, CELL - 4.0)),
-                            MeshMaterial3d(res.flat_mat(color)),
+                            Mesh3d(res.tile_quad()),
+                            MeshMaterial3d(res.tile_mat(color)),
                             Transform::from_translation(world2_to_3d(pos) + Vec3::Y * 0.35),
                             NotShadowCaster,
                             StaticScene,
@@ -668,12 +996,17 @@ fn spawn_zone_tiles_3d(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn spawn_building_3d(
     commands: &mut Commands,
     res: &mut Res3d,
+    models: &ModelAssets,
+    scenes: &Assets<Scene>,
     building: &Building,
     side: Team,
     icon_assets: &BuildingIconAssets,
+    scaffold: bool,
 ) {
     let pos = cell_to_world(side, building.lane, building.zone, building.cell);
     let base = world2_to_3d(pos);
@@ -691,17 +1024,54 @@ fn spawn_building_3d(
         NotShadowCaster,
         StaticScene,
     ));
-    commands.spawn((
-        Mesh3d(res.stand_quad(52.0, 52.0)),
-        MeshMaterial3d(res.tex_mat(
-            &building_icon_handle(icon_assets, building.kind),
-            Color::WHITE,
-        )),
-        Transform::from_translation(base + Vec3::Y * 27.0),
-        Billboard,
-        NotShadowCaster,
-        StaticScene,
-    ));
+    let model_name = building_model_name(building.kind);
+    let model = models
+        .buildings
+        .get(&model_name)
+        .filter(|h| scenes.contains(*h));
+    if let Some(handle) = model {
+        // Real mesh (M2+): modelled in Blender, casts shadows.
+        commands.spawn((
+            SceneRoot(handle.clone()),
+            Transform::from_translation(base + Vec3::Y * 4.0)
+                .with_scale(Vec3::splat(if scaffold { 0.62 } else { 1.0 })),
+            StaticScene,
+        ));
+    } else {
+        let (icon_h, icon_alpha) = if scaffold { (30.0, 0.7) } else { (52.0, 1.0) };
+        commands.spawn((
+            Mesh3d(res.stand_quad(icon_h, icon_h)),
+            MeshMaterial3d(res.tex_mat(
+                &building_icon_handle(icon_assets, building.kind),
+                Color::srgba(1.0, 0.0, 1.0, 1.0), // TEST fallback
+            )),
+            Transform::from_translation(base + Vec3::Y * icon_h * 0.5),
+            Billboard,
+            NotShadowCaster,
+            StaticScene,
+        ));
+    }
+    if scaffold {
+        // Construction scaffold: crossed timber posts + top beam.
+        let timber = Color::srgb(0.55, 0.40, 0.24);
+        for angle in [0.35_f32, -0.35] {
+            commands.spawn((
+                Mesh3d(res.stand_quad(4.0, 40.0)),
+                MeshMaterial3d(res.flat_mat(timber)),
+                Transform::from_translation(base + Vec3::Y * 20.0)
+                    .with_rotation(Quat::from_rotation_z(angle)),
+                NotShadowCaster,
+                StaticScene,
+            ));
+        }
+        commands.spawn((
+            Mesh3d(res.stand_quad(46.0, 4.0)),
+            MeshMaterial3d(res.flat_mat(timber)),
+            Transform::from_translation(base + Vec3::Y * 38.0),
+            NotShadowCaster,
+            StaticScene,
+        ));
+    }
 }
 
 fn spawn_building_silhouette_3d(
@@ -725,6 +1095,8 @@ fn spawn_building_silhouette_3d(
 fn spawn_castle_3d(
     commands: &mut Commands,
     res: &mut Res3d,
+    models: &ModelAssets,
+    scenes: &Assets<Scene>,
     castle: &SimCastle,
     snapshot: &MatchSnapshot,
     icon_assets: &BuildingIconAssets,
@@ -739,14 +1111,28 @@ fn spawn_castle_3d(
         NotShadowCaster,
         StaticScene,
     ));
-    commands.spawn((
-        Mesh3d(res.stand_quad(118.0, 118.0)),
-        MeshMaterial3d(res.tex_mat(&castle_icon_handle(icon_assets, race), Color::WHITE)),
-        Transform::from_translation(base + Vec3::Y * 60.0),
-        Billboard,
-        NotShadowCaster,
-        StaticScene,
-    ));
+    let castle_name = format!("{race:?}_castle").to_lowercase();
+    let model = models
+        .castles
+        .get(&castle_name)
+        .filter(|h| scenes.contains(*h));
+    if let Some(handle) = model {
+        commands.spawn((
+            SceneRoot(handle.clone()),
+            Transform::from_translation(base)
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+            StaticScene,
+        ));
+    } else {
+        commands.spawn((
+            Mesh3d(res.stand_quad(118.0, 118.0)),
+            MeshMaterial3d(res.tex_mat(&castle_icon_handle(icon_assets, race), Color::WHITE)),
+            Transform::from_translation(base + Vec3::Y * 60.0),
+            Billboard,
+            NotShadowCaster,
+            StaticScene,
+        ));
+    }
 
     // Castle health bar floats above the keep; statics rebuild on damage.
     let health_pct = castle.health.max(0) as f32 / castle.max_health.max(1) as f32;
@@ -770,9 +1156,12 @@ fn spawn_castle_3d(
 
 // ---- Units ----
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_unit_visual_3d(
     commands: &mut Commands,
     res: &mut Res3d,
+    models: &ModelAssets,
+    scenes: &Assets<Scene>,
     unit: &Unit,
     side: Team,
     balance: &BalanceConfig,
@@ -781,10 +1170,15 @@ pub(crate) fn spawn_unit_visual_3d(
     let config = balance.unit(unit.kind);
     let s = unit_sprite_size(unit.kind);
     let world = sim_pos_to_world(unit.pos);
+    let model_name = unit_model_name(unit.kind);
+    let model_handle = model_name
+        .as_ref()
+        .and_then(|name| models.units.get(name))
+        .filter(|h| scenes.contains(*h));
+    let is_model = model_handle.is_some();
     let root = commands
-        .spawn((
-            Transform::from_translation(world2_to_3d(world) + Vec3::Y * 0.45),
-            Billboard,
+        .spawn(Transform::from_translation(
+            world2_to_3d(world) + Vec3::Y * 0.45,
         ))
         .id();
 
@@ -870,6 +1264,7 @@ pub(crate) fn spawn_unit_visual_3d(
         kind: unit.kind,
         side,
         last_pos: world,
+        is_model,
     }
 }
 
@@ -883,6 +1278,8 @@ fn team_tint(side: Team) -> Color {
 pub(crate) fn sync_units_3d(
     mut commands: Commands,
     mut registry: ResMut<SceneRegistry>,
+    models: Res<ModelAssets>,
+    scenes: Res<Assets<Scene>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
@@ -911,8 +1308,16 @@ pub(crate) fn sync_units_3d(
             materials: &mut materials,
             assets: &mut world_assets,
         };
-        let visual =
-            spawn_unit_visual_3d(&mut commands, &mut res, unit, side, &balance, &unit_assets);
+        let visual = spawn_unit_visual_3d(
+            &mut commands,
+            &mut res,
+            &models,
+            &scenes,
+            unit,
+            side,
+            &balance,
+            &unit_assets,
+        );
         registry.units.insert(unit.id, visual);
         sfx.push(Sfx::UnitSpawn);
     }
@@ -1031,8 +1436,23 @@ pub(crate) fn animate_units_3d(
         let world = sim_pos_to_world(sim_pos);
         let pos3 = world2_to_3d(world) + Vec3::Y * 0.45;
         root.translation = pos3;
-        let to_cam = cam_pos - pos3;
-        root.rotation = Quat::from_rotation_y(to_cam.x.atan2(to_cam.z));
+        if visual.is_model {
+            root.rotation = Quat::IDENTITY;
+            if let Ok(mut sprite) = transforms.get_mut(visual.sprite) {
+                // Face the march direction (models are authored facing +X).
+                if unit.velocity.x.abs() > 0.05 {
+                    let yaw = if unit.velocity.x > 0.0 {
+                        0.0
+                    } else {
+                        std::f32::consts::PI
+                    };
+                    sprite.rotation = Quat::from_rotation_y(yaw);
+                }
+            }
+        } else {
+            let to_cam = cam_pos - pos3;
+            root.rotation = Quat::from_rotation_y(to_cam.x.atan2(to_cam.z));
+        }
 
         // Idle bob on the display clock (same contract as the 2D renderer).
         let phase = time.elapsed_secs() * 4.0 + (unit.id % 97) as f32 * 1.37;
@@ -1232,6 +1652,7 @@ pub(crate) fn update_placement_preview_3d(
     selection: Res<BuildSelection>,
     state: Res<SnapshotState>,
     building_icons: Res<BuildingIconAssets>,
+    time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
@@ -1279,10 +1700,13 @@ pub(crate) fn update_placement_preview_3d(
         assets: &mut world_assets,
     };
     let base = world2_to_3d(pos);
+    // Hover pulse (§7.2): the footprint tile breathes under the ghost.
+    let pulse = 1.0 + (time.elapsed_secs() * 4.5).sin() * 0.05;
+    let bob = (time.elapsed_secs() * 2.5).sin() * 1.5;
     commands.spawn((
-        Mesh3d(res.flat_quad(CELL - 1.0, CELL - 1.0)),
-        MeshMaterial3d(res.flat_mat(color)),
-        Transform::from_translation(base + Vec3::Y * 1.0),
+        Mesh3d(res.tile_quad()),
+        MeshMaterial3d(res.tile_mat(color)),
+        Transform::from_translation(base + Vec3::Y * 1.0).with_scale(Vec3::splat(pulse)),
         NotShadowCaster,
         PreviewEntity,
     ));
@@ -1292,7 +1716,7 @@ pub(crate) fn update_placement_preview_3d(
             &building_icon_handle(&building_icons, kind),
             Color::srgba(1.0, 1.0, 1.0, 0.55),
         )),
-        Transform::from_translation(base + Vec3::Y * (CELL + 6.0) * 0.5),
+        Transform::from_translation(base + Vec3::Y * ((CELL + 6.0) * 0.5 + bob)),
         Billboard,
         NotShadowCaster,
         PreviewEntity,

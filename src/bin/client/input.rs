@@ -375,6 +375,8 @@ pub(crate) fn placement_input(
     mut world_selection: ResMut<WorldSelection>,
     state: Res<SnapshotState>,
     mut sfx: ResMut<SfxQueue>,
+    time: Res<Time>,
+    mut build_fx: ResMut<BuildFx>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -437,6 +439,7 @@ pub(crate) fn placement_input(
         first_sent: Instant::now(),
         last_sent: Instant::now(),
     });
+    note_placement(&mut build_fx, time.elapsed_secs(), team, lane, zone, cell);
     world_selection.selected = Some(SelectedObject::Cell(team, lane, zone, cell));
     selection.kind = None;
 }
@@ -495,6 +498,7 @@ pub(crate) fn update_placement_preview(
     selection: Res<BuildSelection>,
     state: Res<SnapshotState>,
     building_icons: Res<BuildingIconAssets>,
+    time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
@@ -510,6 +514,7 @@ pub(crate) fn update_placement_preview(
             selection,
             state,
             building_icons,
+            time,
             meshes,
             materials,
             world_assets,

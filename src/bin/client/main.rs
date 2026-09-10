@@ -330,6 +330,19 @@ fn run_replay(path: std::path::PathBuf) {
                 }),
         )
         .insert_resource(ClearColor(Color::srgb(0.07, 0.08, 0.09)))
+        .register_type::<Transform>()
+        .register_type::<GlobalTransform>()
+        .register_type::<Visibility>()
+        .register_type::<bevy::transform::components::TransformTreeChanged>()
+        .register_type::<bevy::camera::visibility::InheritedVisibility>()
+        .register_type::<bevy::camera::visibility::ViewVisibility>()
+        .register_type::<bevy::mesh::Mesh3d>()
+        .register_type::<bevy::camera::primitives::Aabb>()
+        .register_type::<bevy::gltf::GltfMeshName>()
+        .register_type::<bevy::gltf::GltfMaterialName>()
+        .register_type::<ChildOf>()
+        .register_type::<Children>()
+        .register_type::<Name>()
         .insert_resource(ReplayControls::default())
         .insert_resource(DemoShots {
             enabled: false,
@@ -338,6 +351,7 @@ fn run_replay(path: std::path::PathBuf) {
         })
         .init_resource::<World3dAssets>()
         .init_resource::<CameraRig>()
+        .init_resource::<BuildFx>()
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
         .init_resource::<BuildHover>()
@@ -501,6 +515,9 @@ struct UnitVisual {
     kind: UnitKind,
     side: Team,
     last_pos: Vec2,
+    /// True when the sprite slot holds a Blender mesh (glTF scene) instead of
+    /// a camera-facing quad; drives facing + bob behavior.
+    is_model: bool,
 }
 
 #[derive(Resource, Default)]
@@ -871,6 +888,20 @@ fn main() {
         } else {
             Color::srgb(0.07, 0.08, 0.09)
         }))
+        // glTF scenes spawn via reflection; these types must be registered.
+        .register_type::<Transform>()
+        .register_type::<GlobalTransform>()
+        .register_type::<Visibility>()
+        .register_type::<bevy::transform::components::TransformTreeChanged>()
+        .register_type::<bevy::camera::visibility::InheritedVisibility>()
+        .register_type::<bevy::camera::visibility::ViewVisibility>()
+        .register_type::<bevy::mesh::Mesh3d>()
+        .register_type::<bevy::camera::primitives::Aabb>()
+        .register_type::<bevy::gltf::GltfMeshName>()
+        .register_type::<bevy::gltf::GltfMaterialName>()
+        .register_type::<ChildOf>()
+        .register_type::<Children>()
+        .register_type::<Name>()
         .insert_resource(ClientNet {
             socket,
             server_addr: options.server_addr,
@@ -925,6 +956,7 @@ fn main() {
         .init_resource::<UiLayout>()
         .init_resource::<World3dAssets>()
         .init_resource::<CameraRig>()
+        .init_resource::<BuildFx>()
         .insert_resource(DemoShots {
             enabled: options.demo_shots,
             counter: 0,
@@ -963,6 +995,7 @@ fn main() {
                         update_object_highlight,
                         update_fog_tiles,
                         update_placement_preview,
+                        update_build_fx,
                         orient_billboards,
                         redraw_game_ui,
                         pin_ui_to_camera,
@@ -1155,6 +1188,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     if !is_3d() {
         spawn_grass_background(&mut commands);
         spawn_static_board(&mut commands, None, 2, None);
+    } else {
+        setup_models(commands.reborrow(), asset_server.clone());
     }
     let fonts = FontAssets {
         display: asset_server.load("fonts/MedievalSharp.ttf"),

@@ -105,20 +105,29 @@ pub(crate) fn sync_static_scene(
     net: Res<ClientNet>,
     fog: Res<FogMemory>,
     building_icons: Res<BuildingIconAssets>,
+    selection: Res<BuildSelection>,
+    build_fx: Res<BuildFx>,
+    time: Res<Time>,
+    models: Res<ModelAssets>,
+    scenes: Res<Assets<Scene>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
-    unit_assets: Res<UnitSpriteAssets>,
 ) {
     if is_3d() {
         sync_static_3d(
             commands,
             registry,
             statics,
+            models,
+            scenes,
             meshes,
             materials,
             world_assets,
             building_icons,
+            selection,
+            build_fx,
+            time,
             state,
             net,
             fog,
@@ -209,6 +218,8 @@ pub(crate) fn sync_units(
     unit_assets: Res<UnitSpriteAssets>,
     mut sfx: ResMut<SfxQueue>,
     frame_sets: Res<UnitFrameSets>,
+    models: Res<ModelAssets>,
+    scenes: Res<Assets<Scene>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
@@ -217,6 +228,8 @@ pub(crate) fn sync_units(
         sync_units_3d(
             commands,
             registry,
+            models,
+            scenes,
             meshes,
             materials,
             world_assets,
@@ -1239,6 +1252,7 @@ pub(crate) fn spawn_unit_visual(
         kind: unit.kind,
         side,
         last_pos: world,
+        is_model: false,
     }
 }
 

@@ -153,22 +153,31 @@ pub(crate) fn note_snapshot_for_interp(interp: &mut RenderInterp, state: &ResMut
     }
 }
 
-pub(crate) fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotState>) {
-    if net.connected
-        && net.player_id.is_none()
-        && !net.sent_auto_game
-        && (net.auto_ready || net.auto_build_demo)
-    {
-        send_client(
-            &net,
-            &ClientPacket::CreateGame {
-                name: format!("{}'s Game", net.player_name),
-                team_size: None,
-                random_factions: false,
-            },
-        );
-        net.sent_auto_game = true;
-        return;
+pub(crate) fn demo_automation(
+    mut net: ResMut<ClientNet>,
+    state: Res<SnapshotState>,
+    mut selection: ResMut<BuildSelection>,
+    mut hints: ResMut<MatchHints>,
+) {
+    if net.connected && net.player_id.is_none() && (net.auto_ready || net.auto_build_demo) {
+        if !net.sent_auto_game {
+            send_client(
+                &net,
+                &ClientPacket::CreateGame {
+                    name: format!("{}'s Game", net.player_name),
+                    team_size: None,
+                    random_factions: false,
+                },
+            );
+            net.sent_auto_game = true;
+            return;
+        }
+        // A stale connection or lost packet can leave us seatless; retry the
+        // join periodically until the server frees the name (zombie timeout).
+        if net.last_join.elapsed() >= Duration::from_secs(3) {
+            send_join(&mut net);
+            return;
+        }
     }
     let Some(player_id) = net.player_id else {
         return;
@@ -219,6 +228,11 @@ pub(crate) fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotSta
         .unwrap_or(net.auto_race);
     let balance = active_balance(&state);
     let kind = balance.race(race).buildings[0];
+    // Showcase the placement UI: footprint tiles + ghost while auto-building.
+    if hints.step == 0 {
+        selection.kind = Some(kind);
+        hints.step = 1;
+    }
     send_client(
         &net,
         &ClientPacket::PlaceBuilding {

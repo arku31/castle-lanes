@@ -15,6 +15,8 @@ bevy = { version = "=0.18.1", default-features = false, features = [
     "bevy_state",
     "bevy_text",
     "bevy_pbr",
+    "bevy_scene",
+    "bevy_gltf",
     "bevy_ui",
     "bevy_winit",
     "default_font",
