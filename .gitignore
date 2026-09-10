@@ -3,3 +3,4 @@ config/client_settings.json
 recordings/
 profiles.json
 crashes/
+shots/
