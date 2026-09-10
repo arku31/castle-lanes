@@ -13,9 +13,21 @@ Castle Lanes is a native desktop Rust/Bevy game inspired by the builder-autobatt
 
 More views — the HUD, lobby, and overlays all fit a 1600×900 window without scrolling:
 
+| The Vanguard castle and terrace (shared sun, blob shadows) | Grove match over the water channel and bridges |
+| --- | --- |
+| ![Vanguard castle close-up with buildings, trees and shadows](docs/screenshots/battle_3d_castle.png) | ![Grove faction match over the water channel](docs/screenshots/battle_3d_grove.png) |
+
+| Ember match on the enemy shore | Game browser over the 3D field |
+| --- | --- |
+| ![Ember faction match with bridges and water](docs/screenshots/battle_3d_ember.png) | ![Game lobby browser over the 3D battlefield](docs/screenshots/lobby_3d.png) |
+
 | Victory on the 3D field | 2D fallback renderer (--renderer2d) |
 | --- | --- |
 | ![Game over screen on the 3D battlefield](docs/screenshots/m0_gameover_3d.png) | ![v0.1 2D renderer fallback](docs/screenshots/m0_2d_fallback.png) |
+
+| Help overlay (H) | Settings overlay (O) |
+| --- | --- |
+| ![Help overlay with rules and controls](docs/screenshots/help_3d.png) | ![Settings overlay with volume and resolution](docs/screenshots/settings_3d.png) |
 
 | Help overlay (H) | Settings overlay (O) |
 | --- | --- |
