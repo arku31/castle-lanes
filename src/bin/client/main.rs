@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::sprite::Anchor;
 use bevy::window::{PrimaryWindow, WindowResolution};
 use castle_lanes::net::{
@@ -19,6 +20,7 @@ use std::time::{Duration, Instant};
 mod audio;
 mod input;
 mod net;
+mod render3d;
 mod scene;
 mod ui;
 mod vfx;
@@ -26,6 +28,7 @@ mod vfx;
 use audio::*;
 use input::*;
 use net::*;
+use render3d::*;
 use scene::*;
 use ui::*;
 use vfx::*;
@@ -328,6 +331,13 @@ fn run_replay(path: std::path::PathBuf) {
         )
         .insert_resource(ClearColor(Color::srgb(0.07, 0.08, 0.09)))
         .insert_resource(ReplayControls::default())
+        .insert_resource(DemoShots {
+            enabled: false,
+            counter: 0,
+            next_at: 0.0,
+        })
+        .init_resource::<World3dAssets>()
+        .init_resource::<CameraRig>()
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
         .init_resource::<BuildHover>()
@@ -345,13 +355,17 @@ fn run_replay(path: std::path::PathBuf) {
         .insert_resource(player)
         .init_resource::<UiLayout>()
         .add_systems(Startup, setup)
+        .add_systems(Startup, setup_3d_world)
         .add_systems(
             Update,
             (
                 update_ui_layout,
+                auto_screenshots,
                 replay_advance,
                 replay_input,
                 camera_controls,
+                camera_rig_input,
+                apply_camera_rig,
                 detect_combat_vfx,
                 update_world_hover,
                 sync_static_scene,
@@ -359,6 +373,7 @@ fn run_replay(path: std::path::PathBuf) {
                 animate_units,
                 update_object_highlight,
                 update_fog_tiles,
+                orient_billboards,
                 redraw_game_ui,
                 pin_ui_to_camera,
                 animate_grass,
@@ -372,6 +387,54 @@ fn run_replay(path: std::path::PathBuf) {
 #[derive(Resource, Default)]
 struct MatchHints {
     step: usize,
+}
+
+/// In-engine screenshot capture (plan-0.2.md M0 gate): F12 saves a manual
+/// frame; `--demo-shots` records bursts for autonomous verification because
+/// the desktop screenshot tooling on this box is unreliable.
+#[derive(Resource)]
+struct DemoShots {
+    enabled: bool,
+    counter: u64,
+    next_at: f32,
+}
+
+fn auto_screenshots(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut demo: ResMut<DemoShots>,
+) {
+    if keys.just_pressed(KeyCode::F12) {
+        let path = format!(
+            "shots/manual_{}.png",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path));
+    }
+    if demo.enabled {
+        if demo.next_at == 0.0 {
+            demo.next_at = time.elapsed_secs() + demo.interval_secs();
+        } else if time.elapsed_secs() >= demo.next_at {
+            demo.next_at = time.elapsed_secs() + demo.interval_secs();
+            let path = format!("shots/auto_{:04}.png", demo.counter);
+            demo.counter += 1;
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(path));
+        }
+    }
+}
+
+impl DemoShots {
+    fn interval_secs(&self) -> f32 {
+        2.5
+    }
 }
 
 #[derive(Resource, Default)]
@@ -791,6 +854,9 @@ fn main() {
                         title: format!("Castle Lanes v{}", castle_lanes::VERSION),
                         resolution: WindowResolution::new(1600, 900),
                         resizable: true,
+                        // Dev/demo aid: the capture pipeline on this box
+                        // depends on the window actually being composited.
+                        window_level: bevy::window::WindowLevel::AlwaysOnTop,
                         ..default()
                     }),
                     ..default()
@@ -800,7 +866,11 @@ fn main() {
                     ..default()
                 }),
         )
-        .insert_resource(ClearColor(Color::srgb(0.07, 0.08, 0.09)))
+        .insert_resource(ClearColor(if is_3d() {
+            Color::srgb(0.52, 0.65, 0.78)
+        } else {
+            Color::srgb(0.07, 0.08, 0.09)
+        }))
         .insert_resource(ClientNet {
             socket,
             server_addr: options.server_addr,
@@ -853,11 +923,20 @@ fn main() {
         .init_resource::<MatchHints>()
         .insert_resource(ClientSettings::load())
         .init_resource::<UiLayout>()
+        .init_resource::<World3dAssets>()
+        .init_resource::<CameraRig>()
+        .insert_resource(DemoShots {
+            enabled: options.demo_shots,
+            counter: 0,
+            next_at: 0.0,
+        })
         .add_systems(Startup, setup)
+        .add_systems(Startup, setup_3d_world)
         .add_systems(
             Update,
             (
                 update_ui_layout,
+                auto_screenshots,
                 (
                     (
                         receive_packets,
@@ -867,6 +946,8 @@ fn main() {
                         ui_mouse_input,
                         placement_input,
                         camera_controls,
+                        camera_rig_input,
+                        apply_camera_rig,
                         detect_combat_vfx,
                         update_build_hover,
                         update_world_hover,
@@ -882,6 +963,7 @@ fn main() {
                         update_object_highlight,
                         update_fog_tiles,
                         update_placement_preview,
+                        orient_billboards,
                         redraw_game_ui,
                         pin_ui_to_camera,
                         animate_grass,
@@ -910,6 +992,8 @@ struct ClientOptions {
     show_help: bool,
     /// Open with the settings overlay visible (capture/demo aid).
     show_settings: bool,
+    /// Periodically save in-engine screenshots into shots/ (capture aid).
+    demo_shots: bool,
 }
 
 fn parse_args() -> ClientOptions {
@@ -922,6 +1006,7 @@ fn parse_args() -> ClientOptions {
     let mut replay = None;
     let mut show_help = false;
     let mut show_settings = false;
+    let mut demo_shots = false;
     let args: Vec<String> = env::args().collect();
     let mut legacy_json = false;
     let mut idx = 1;
@@ -948,6 +1033,14 @@ fn parse_args() -> ClientOptions {
             "--legacy-json" => {
                 legacy_json = true;
             }
+            // plan-0.2.md: v0.1 2D renderer stays available as escape hatch.
+            "--renderer2d" => {
+                set_renderer_3d(false);
+            }
+            // In-engine capture (spectacle is broken on this box).
+            "--demo-shots" => {
+                demo_shots = true;
+            }
             "--show-help" => {
                 show_help = true;
             }
@@ -972,6 +1065,7 @@ fn parse_args() -> ClientOptions {
         replay,
         show_help,
         show_settings,
+        demo_shots,
     }
 }
 
@@ -989,7 +1083,26 @@ fn parse_race(value: &str) -> RaceKind {
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn(Camera2d);
+    if is_3d() {
+        // Dual-camera layout (plan-0.2.md §3.1): the UI Camera2d draws after
+        // the 3D world camera and never clears it; it is the default UI
+        // target so the whole v0.1 HUD keeps working unchanged.
+        commands.spawn((
+            Camera2d,
+            Camera {
+                order: 1,
+                clear_color: ClearColorConfig::None,
+                ..default()
+            },
+            // No MSAA on either camera: both render straight to the swapchain
+            // so the HUD composes over the 3D pass deterministically (and the
+            // Deck APU keeps the fill rate).
+            Msaa::Off,
+            bevy::ui::IsDefaultUiCamera,
+        ));
+    } else {
+        commands.spawn(Camera2d);
+    }
     commands.insert_resource(UnitSpriteAssets {
         vanguard_guard: asset_server.load("art/units/vanguard_guard.png"),
         vanguard_archer: asset_server.load("art/units/vanguard_archer.png"),
@@ -1039,8 +1152,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         ember_smoke_altar: asset_server.load("art/buildings/ember_smoke_altar.png"),
         ember_inferno_engine: asset_server.load("art/buildings/ember_inferno_engine.png"),
     });
-    spawn_grass_background(&mut commands);
-    spawn_static_board(&mut commands, None, 2, None);
+    if !is_3d() {
+        spawn_grass_background(&mut commands);
+        spawn_static_board(&mut commands, None, 2, None);
+    }
     let fonts = FontAssets {
         display: asset_server.load("fonts/MedievalSharp.ttf"),
     };

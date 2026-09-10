@@ -99,3 +99,67 @@ Current batch in `docs/screenshots/`: `battle.png` (mid-lane clash), `battle_arm
 3. Remaining plan.md tail: team-play client polish (4-lane minimap/camera partly done),
    spectator UI, distribution/packaging check, crash-reporting test.
 4. Optional: decide whether to chase the winit self-exit upstream (see above).
+
+---
+
+# Session addendum — 2026-09-10 (v0.2 M0 on the Steam Deck)
+
+## M0 (3D foundations) is implemented — pending user screenshot review
+
+`src/bin/client/render3d.rs` renders the world with a perspective camera:
+procedural heightfield terrain (generated albedo texture, flat-shaded),
+channel + water, one sun with shadow maps, existing sprites as Y-axis
+billboards, 3D fog quads, RTS camera rig (pitch 50°, wheel zoom, edge pan,
+Home). `--renderer2d` still switches back to the v0.1 renderer. Screenshot
+gate shots: `docs/screenshots/m0_battle_3d.png`, `m0_gameover_3d.png`,
+`m0_2d_fallback.png`.
+
+## Machine gotchas learned here (Steam Deck)
+
+- **Steam Deck power-save blanks the display and stalls compositing; Bevy
+  screenshots then come out all-black (15353 bytes = uniform black).** Wake it
+  with `busctl --user call org.kde.Solid.PowerManagement
+  /org/kde/Solid/PowerManagement org.kde.Solid.PowerManagement wakeup`, or
+  hold an inhibitor (`org.freedesktop.ScreenSaver Inhibit`) via a long-lived
+  python process (`/tmp/keep_awake.py` pattern).
+- **spectacle silently no-ops from automation** (works interactively).
+  Do NOT chase it: the client now has an **in-engine capture**:
+  F12 saves `shots/manual_*.png`, `--demo-shots` saves `shots/auto_NNNN.png`
+  every 2.5 s (uses `bevy::render::view::screenshot::{Screenshot,
+  save_to_disk}`).
+- **`pkill -f castle_lanes` from an automation shell kills the shell itself**
+  (the pattern matches the wrapper's cmdline) — restarts then silently don't
+  happen. Use `pkill -x castle_lanes_se / castle_lanes_cl / castle_lanes_bo`
+  (comm names truncate at 15 chars) — see `/tmp/cl_restart.sh`.
+- Two clients with the same `--name` → "That player name is already
+  connected"; always verify old processes are really dead after a restart.
+
+## Bevy 0.18 API drift hit during M0
+
+- Lighting moved to `bevy::light` (DirectionalLight, NotShadowCaster,
+  CascadeShadowConfigBuilder, DirectionalLightShadowMap); `AmbientLight` is
+  now a **component that requires Camera** (attach to the camera entity).
+- `Camera3d`/`ClearColorConfig` live in `bevy::camera`; `IsDefaultUiCamera`
+  in `bevy::ui`; `AlphaMode` in `bevy::render::alpha`; `PrimitiveTopology`
+  in `bevy::mesh`; `RenderAssetUsages` in `bevy::asset`.
+- `PerspectiveProjection` (not `Perspective`); `Color::mix` not `lerp`
+  (`use bevy::color::Mix`); `normalize_or_zero`; directional lights point
+  along transform **-Z** (looking_at works).
+- **Triangle winding matters**: my first terrain faced away from the camera
+  (culled). Facet normal = `e2.cross(e1)` with CCW-from-above ordering.
+- Dual-camera composition: UI `Camera2d` needs `order: 1` +
+  `ClearColorConfig::None` + `IsDefaultUiCamera`, and **`Msaa::Off` on both
+  cameras** — with MSAA the swapchain got the UI camera's undefined
+  intermediate and frames rendered black/erased.
+- Vertex colors on `StandardMaterial`: `VERTEX_COLORS` REPLACES base_color in
+  pbr_fragment (then multiplies textures). We use a generated terrain texture
+  instead.
+
+## Known quirks (not M0 regressions)
+
+- A small blue vertical bar near the bottom-center of the battle screen is a
+  **v0.1 HUD element** — visible in `--renderer2d` captures too
+  (`m0_2d_fallback.png`). Parked.
+- Demo auto-race/auto-ready packets are now re-sent while the lobby state
+  shows they haven't taken effect (UDP loss used to strand the demo in the
+  race popup).

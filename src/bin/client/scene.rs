@@ -3,11 +3,15 @@
 pub(crate) use super::audio::*;
 pub(crate) use super::input::*;
 pub(crate) use super::net::*;
+pub(crate) use super::render3d::*;
 pub(crate) use super::ui::*;
 pub(crate) use super::vfx::*;
 use super::*;
 
 pub(crate) fn animate_grass(time: Res<Time>, mut query: Query<(&GrassBlade, &mut Transform)>) {
+    if is_3d() {
+        return;
+    }
     let t = time.elapsed_secs();
     for (blade, mut transform) in &mut query {
         let wave = (t * 1.35 + blade.phase).sin();
@@ -91,6 +95,7 @@ pub(crate) fn static_scene_key(state: &SnapshotState, net: &ClientNet, fog: &Fog
     hasher.finish()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_static_scene(
     mut commands: Commands,
     mut registry: ResMut<SceneRegistry>,
@@ -100,7 +105,26 @@ pub(crate) fn sync_static_scene(
     net: Res<ClientNet>,
     fog: Res<FogMemory>,
     building_icons: Res<BuildingIconAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut world_assets: ResMut<World3dAssets>,
+    unit_assets: Res<UnitSpriteAssets>,
 ) {
+    if is_3d() {
+        sync_static_3d(
+            commands,
+            registry,
+            statics,
+            meshes,
+            materials,
+            world_assets,
+            building_icons,
+            state,
+            net,
+            fog,
+        );
+        return;
+    }
     let key = static_scene_key(&state, &net, &fog);
     if key != registry.statics_key {
         registry.statics_key = key;
@@ -174,6 +198,7 @@ pub(crate) fn sync_static_scene(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_units(
     mut commands: Commands,
     mut registry: ResMut<SceneRegistry>,
@@ -184,7 +209,24 @@ pub(crate) fn sync_units(
     unit_assets: Res<UnitSpriteAssets>,
     mut sfx: ResMut<SfxQueue>,
     frame_sets: Res<UnitFrameSets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut world_assets: ResMut<World3dAssets>,
 ) {
+    if is_3d() {
+        sync_units_3d(
+            commands,
+            registry,
+            meshes,
+            materials,
+            world_assets,
+            state,
+            net,
+            unit_assets,
+            sfx,
+        );
+        return;
+    }
     let Some(snapshot) = &state.snapshot else {
         despawn_all_units(&mut commands, &mut registry);
         return;
@@ -261,11 +303,16 @@ pub(crate) fn animate_units(
     time: Res<Time>,
     interp: Res<RenderInterp>,
     state: Res<SnapshotState>,
-    registry: Res<SceneRegistry>,
+    mut registry: ResMut<SceneRegistry>,
     mut transforms: Query<&mut Transform>,
     mut sprites: Query<&mut Sprite>,
     frame_sets: Res<UnitFrameSets>,
+    cam3d: Query<&GlobalTransform, With<Camera3d>>,
 ) {
+    if is_3d() {
+        animate_units_3d(time, interp, state, registry, cam3d, transforms);
+        return;
+    }
     if registry.units.is_empty() {
         return;
     }
@@ -346,6 +393,7 @@ pub(crate) fn animate_units(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_object_highlight(
     mut commands: Commands,
     mut registry: ResMut<SceneRegistry>,
@@ -353,7 +401,24 @@ pub(crate) fn update_object_highlight(
     world_selection: Res<WorldSelection>,
     world_hover: Res<WorldHover>,
     mut transforms: Query<&mut Transform>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut world_assets: ResMut<World3dAssets>,
 ) {
+    if is_3d() {
+        update_object_highlight_3d(
+            commands,
+            registry,
+            state,
+            world_selection,
+            world_hover,
+            meshes,
+            materials,
+            world_assets,
+            transforms,
+        );
+        return;
+    }
     let Some(snapshot) = &state.snapshot else {
         despawn_highlight(&mut commands, &mut registry);
         return;
@@ -458,13 +523,25 @@ pub(crate) fn despawn_highlight(commands: &mut Commands, registry: &mut SceneReg
 
 /// Fog tile colors mutate in place on snapshot/fog changes; tiles themselves
 /// are spawned once per match in `sync_static_scene`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_fog_tiles(
     state: Res<SnapshotState>,
     fog: Res<FogMemory>,
     net: Res<ClientNet>,
     registry: Res<SceneRegistry>,
-    mut tiles: Query<(&FogTile, &mut Sprite)>,
+    mut sprites: Query<(&FogTile, &mut Sprite)>,
+    mut tiles3d: Query<(
+        &FogTile,
+        &mut MeshMaterial3d<StandardMaterial>,
+        &mut Visibility,
+    )>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut world_assets: ResMut<World3dAssets>,
 ) {
+    if is_3d() {
+        update_fog_tiles_3d(state, fog, net, registry, materials, world_assets, tiles3d);
+        return;
+    }
     if registry.fog_tiles.is_empty() {
         return;
     }
@@ -476,7 +553,7 @@ pub(crate) fn update_fog_tiles(
     }
     let tile_w = MAP_W / FOG_COLUMNS as f32;
     let tile_h = MAP_H / FOG_ROWS as f32;
-    for (tile, mut sprite) in &mut tiles {
+    for (tile, mut sprite) in &mut sprites {
         let pos = fog_cell_center(tile.col, tile.row);
         let reveal = world_reveal_strength(snapshot, team, pos);
         let explored = fog.explored[fog_index(tile.col, tile.row)];

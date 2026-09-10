@@ -14,6 +14,7 @@ bevy = { version = "=0.18.1", default-features = false, features = [
     "bevy_sprite_render",
     "bevy_state",
     "bevy_text",
+    "bevy_pbr",
     "bevy_ui",
     "bevy_winit",
     "default_font",
@@ -21,6 +22,8 @@ bevy = { version = "=0.18.1", default-features = false, features = [
     "png",
     "std",
     "wav",
+    "tonemapping_luts",
+    "zstd_rust",
     "wayland",
     "x11",
 ] }

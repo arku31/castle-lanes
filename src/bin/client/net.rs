@@ -173,7 +173,15 @@ pub(crate) fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotSta
     let Some(player_id) = net.player_id else {
         return;
     };
-    if !net.sent_auto_race {
+    // Auto intents are one-shot UDP sends; a lost packet would stall the demo
+    // in the race popup forever. Re-send while the lobby state shows they
+    // have not taken effect yet.
+    let me = state
+        .snapshot
+        .as_ref()
+        .and_then(|snapshot| current_player(snapshot, player_id));
+    let race_set = me.and_then(|player| player.race).is_some();
+    if !net.sent_auto_race || !race_set {
         send_client(
             &net,
             &ClientPacket::SetRace {
@@ -183,24 +191,18 @@ pub(crate) fn demo_automation(mut net: ResMut<ClientNet>, state: Res<SnapshotSta
         );
         net.sent_auto_race = true;
     }
-    if net.auto_ready && !net.sent_auto_ready {
-        let Some(snapshot) = &state.snapshot else {
-            return;
-        };
-        if current_player(snapshot, player_id)
-            .and_then(|player| player.race)
-            .is_none()
-        {
-            return;
+    if net.auto_ready {
+        let ready = me.map(|player| player.ready).unwrap_or(false);
+        if (!net.sent_auto_ready || !ready) && race_set && me.is_some() {
+            send_client(
+                &net,
+                &ClientPacket::SetReady {
+                    player_id,
+                    ready: true,
+                },
+            );
+            net.sent_auto_ready = true;
         }
-        send_client(
-            &net,
-            &ClientPacket::SetReady {
-                player_id,
-                ready: true,
-            },
-        );
-        net.sent_auto_ready = true;
     }
 
     if !net.auto_build_demo || net.sent_auto_build {

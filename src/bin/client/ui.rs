@@ -3,6 +3,7 @@
 pub(crate) use super::audio::*;
 pub(crate) use super::input::*;
 pub(crate) use super::net::*;
+pub(crate) use super::render3d::*;
 pub(crate) use super::scene::*;
 pub(crate) use super::vfx::*;
 use super::*;
@@ -61,7 +62,12 @@ pub(crate) fn redraw_game_ui(
             snapshot,
             &fog,
             net.team,
-            camera_query.single().ok(),
+            // The perspective rig owns the viewport in 3D; skip the rect.
+            if is_3d() {
+                None
+            } else {
+                camera_query.single().ok()
+            },
             windows.single().ok(),
             &layout,
         );

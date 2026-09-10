@@ -3,10 +3,12 @@
 pub(crate) use super::audio::*;
 pub(crate) use super::input::*;
 pub(crate) use super::net::*;
+pub(crate) use super::render3d::*;
 pub(crate) use super::scene::*;
 pub(crate) use super::ui::*;
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn detect_combat_vfx(
     mut commands: Commands,
     net: Res<ClientNet>,
@@ -14,7 +16,15 @@ pub(crate) fn detect_combat_vfx(
     mut tracker: ResMut<CombatTracker>,
     mut sfx: ResMut<SfxQueue>,
     mut budget: ResMut<VfxBudget>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut world_assets: ResMut<World3dAssets>,
 ) {
+    let mut res = Res3d {
+        meshes: &mut meshes,
+        materials: &mut materials,
+        assets: &mut world_assets,
+    };
     budget.remaining = VFX_BUDGET_PER_SNAPSHOT;
     if !state.is_changed() {
         return;
@@ -72,6 +82,7 @@ pub(crate) fn detect_combat_vfx(
                     ));
                     spawn_combat_impact_budgeted(
                         &mut commands,
+                        &mut res,
                         &mut budget,
                         pos,
                         damage,
@@ -109,7 +120,14 @@ pub(crate) fn detect_combat_vfx(
                         Vec2::new(pos.x - building_side.opponent().direction() * 58.0, pos.y),
                         AttackType::Siege,
                     ));
-                    spawn_structure_impact(&mut commands, pos, damage, attacker.0, attacker.1);
+                    spawn_structure_impact(
+                        &mut commands,
+                        &mut res,
+                        pos,
+                        damage,
+                        attacker.0,
+                        attacker.1,
+                    );
                 }
             }
         }
@@ -149,6 +167,7 @@ pub(crate) fn detect_combat_vfx(
                     ));
                 spawn_combat_impact_budgeted(
                     &mut commands,
+                    &mut res,
                     &mut budget,
                     pos,
                     damage,
@@ -164,7 +183,7 @@ pub(crate) fn detect_combat_vfx(
             for event in &snapshot.bounty_events {
                 if event.team == team && !tracker.seen_bounty_events.contains(&event.id) {
                     let pos = sim_pos_to_world(event.pos) + Vec2::new(0.0, 34.0);
-                    spawn_bounty_text(&mut commands, pos, event.amount, event.team);
+                    spawn_bounty_text(&mut commands, &mut res, pos, event.amount, event.team);
                     sfx.push(Sfx::BountyCoin);
                     tracker.seen_bounty_events.insert(event.id);
                 }
@@ -208,15 +227,32 @@ pub(crate) fn detect_combat_vfx(
 pub(crate) fn update_combat_vfx(
     mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(
-        Entity,
-        &mut CombatVfx,
-        &mut Transform,
-        Option<&mut TextFont>,
-        Option<&mut TextColor>,
-        Option<&mut Sprite>,
-    )>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<
+        (
+            Entity,
+            &mut CombatVfx,
+            &mut Transform,
+            Option<&mut TextFont>,
+            Option<&mut TextColor>,
+            Option<&mut Sprite>,
+        ),
+        Without<VfxBillboard>,
+    >,
+    vfx3d: Query<
+        (
+            Entity,
+            &mut CombatVfx,
+            &mut Transform,
+            &MeshMaterial3d<StandardMaterial>,
+        ),
+        With<VfxBillboard>,
+    >,
 ) {
+    if is_3d() {
+        update_combat_vfx_3d(commands, time, materials, vfx3d);
+        return;
+    }
     for (entity, mut vfx, mut transform, font, text_color, sprite) in &mut query {
         vfx.lifetime -= time.delta_secs();
         if vfx.lifetime <= 0.0 {
@@ -296,11 +332,17 @@ pub(crate) fn building_hit_pos(building: &Building, side: Team) -> Vec2 {
 
 pub(crate) fn spawn_structure_impact(
     commands: &mut Commands,
+    res: &mut Res3d,
     target: Vec2,
     damage: i32,
     source: Vec2,
     attack_type: AttackType,
 ) {
+    if is_3d() {
+        spawn_structure_impact_3d(res, commands, target);
+        spawn_combat_impact(commands, res, target, damage, source, attack_type, false);
+        return;
+    }
     commands.spawn((
         Sprite::from_color(Color::srgba(1.0, 0.24, 0.08, 0.34), Vec2::new(58.0, 46.0)),
         Transform::from_xyz(target.x, target.y - 8.0, VFX_Z + 1.0)
@@ -321,7 +363,7 @@ pub(crate) fn spawn_structure_impact(
             velocity: Vec2::ZERO,
         },
     ));
-    spawn_combat_impact(commands, target, damage, source, attack_type, false);
+    spawn_combat_impact(commands, res, target, damage, source, attack_type, false);
     let debris_color = Color::srgb(0.74, 0.56, 0.34);
     for (idx, offset) in [
         Vec2::new(-13.0, -5.0),
@@ -347,12 +389,19 @@ pub(crate) fn spawn_structure_impact(
 
 pub(crate) fn spawn_combat_impact(
     commands: &mut Commands,
+    res: &mut Res3d,
     target: Vec2,
     damage: i32,
     source: Vec2,
     attack_type: AttackType,
     castle_hit: bool,
 ) {
+    if is_3d() {
+        // Bursts and streaks now; floating damage numbers land in M5.
+        spawn_impact_3d(res, commands, target, attack_type, castle_hit);
+        spawn_streak_3d(res, commands, source, target, attack_type);
+        return;
+    }
     let color = damage_number_color(attack_type, castle_hit);
     let big_hit = damage >= if castle_hit { 12 } else { 8 };
     let text = if big_hit {
@@ -384,6 +433,7 @@ pub(crate) fn spawn_combat_impact(
 /// Budgeted variant: skips streak/burst when the per-snapshot budget is spent.
 fn spawn_combat_impact_budgeted(
     commands: &mut Commands,
+    res: &mut Res3d,
     budget: &mut VfxBudget,
     target: Vec2,
     damage: i32,
@@ -392,7 +442,17 @@ fn spawn_combat_impact_budgeted(
     castle_hit: bool,
 ) {
     if budget.take() {
-        spawn_combat_impact(commands, target, damage, source, attack_type, castle_hit);
+        spawn_combat_impact(
+            commands,
+            res,
+            target,
+            damage,
+            source,
+            attack_type,
+            castle_hit,
+        );
+    } else if is_3d() {
+        spawn_impact_3d(res, commands, target, attack_type, castle_hit);
     } else {
         let color = damage_number_color(attack_type, castle_hit);
         spawn_damage_text(
@@ -429,9 +489,34 @@ pub(crate) fn spawn_damage_text(
     ));
 }
 
-pub(crate) fn spawn_bounty_text(commands: &mut Commands, pos: Vec2, amount: i32, team: Team) {
-    let text = format!("+{amount}g");
+pub(crate) fn spawn_bounty_text(
+    commands: &mut Commands,
+    res: &mut Res3d,
+    pos: Vec2,
+    amount: i32,
+    team: Team,
+) {
     let accent = team_color(team);
+    if is_3d() {
+        // Coin sparkles now; the floating "+Ng" text lands in M5.
+        for offset in [
+            Vec2::new(-16.0, -2.0),
+            Vec2::new(19.0, 3.0),
+            Vec2::new(4.0, 15.0),
+        ] {
+            spawn_sparkle_3d(
+                res,
+                commands,
+                pos,
+                accent,
+                offset,
+                Vec2::new(offset.x * 0.42, 48.0 + offset.y.max(0.0)),
+                0.72,
+            );
+        }
+        return;
+    }
+    let text = format!("+{amount}g");
     spawn_floating_text(
         commands,
         &text,

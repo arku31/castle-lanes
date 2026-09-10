@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 pub(crate) use super::audio::*;
 pub(crate) use super::net::*;
+pub(crate) use super::render3d::*;
 pub(crate) use super::scene::*;
 pub(crate) use super::ui::*;
 pub(crate) use super::vfx::*;
@@ -367,6 +368,7 @@ pub(crate) fn placement_input(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    cam3d: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     layout: Res<UiLayout>,
     mut net: ResMut<ClientNet>,
     mut selection: ResMut<BuildSelection>,
@@ -386,19 +388,10 @@ pub(crate) fn placement_input(
     let (Some(player_id), Some(team)) = (net.player_id, net.team) else {
         return;
     };
-    let Ok(window) = windows.single() else {
-        return;
-    };
     let Some(screen) = cursor_screen_pos(&windows) else {
         return;
     };
-    let Ok((camera, transform)) = camera_query.single() else {
-        return;
-    };
-    let Some(cursor) = window.cursor_position() else {
-        return;
-    };
-    let Ok(world) = camera.viewport_to_world_2d(transform, cursor) else {
+    let Some(world) = cursor_world(&windows, &camera_query, &cam3d) else {
         return;
     };
     if screen.y <= layout.panel_top_y() {
@@ -496,12 +489,33 @@ pub(crate) fn update_placement_preview(
     preview_query: Query<Entity, With<PreviewEntity>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    cam3d: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     layout: Res<UiLayout>,
     net: Res<ClientNet>,
     selection: Res<BuildSelection>,
     state: Res<SnapshotState>,
     building_icons: Res<BuildingIconAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut world_assets: ResMut<World3dAssets>,
 ) {
+    if is_3d() {
+        update_placement_preview_3d(
+            commands,
+            preview_query,
+            windows,
+            cam3d,
+            layout,
+            net,
+            selection,
+            state,
+            building_icons,
+            meshes,
+            materials,
+            world_assets,
+        );
+        return;
+    }
     for entity in &preview_query {
         commands.entity(entity).despawn();
     }
@@ -515,19 +529,10 @@ pub(crate) fn update_placement_preview(
     let (Some(player_id), Some(team)) = (net.player_id, net.team) else {
         return;
     };
-    let Ok(window) = windows.single() else {
-        return;
-    };
     let Some(screen) = cursor_screen_pos(&windows) else {
         return;
     };
-    let Ok((camera, transform)) = camera_query.single() else {
-        return;
-    };
-    let Some(cursor) = window.cursor_position() else {
-        return;
-    };
-    let Ok(world) = camera.viewport_to_world_2d(transform, cursor) else {
+    let Some(world) = cursor_world(&windows, &camera_query, &cam3d) else {
         return;
     };
     if screen.y <= layout.panel_top_y() {
@@ -610,12 +615,13 @@ pub(crate) fn update_build_hover(
 pub(crate) fn update_world_hover(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    cam3d: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     layout: Res<UiLayout>,
     net: Res<ClientNet>,
     state: Res<SnapshotState>,
     mut hover: ResMut<WorldHover>,
 ) {
-    let hovered = cursor_world(&windows, &camera_query).and_then(|world| {
+    let hovered = cursor_world(&windows, &camera_query, &cam3d).and_then(|world| {
         let screen = cursor_screen_pos(&windows)?;
         if screen.y <= layout.panel_top_y() {
             return None;
@@ -644,6 +650,10 @@ pub(crate) fn camera_controls(
     mut camera_home: ResMut<CameraHome>,
     mut camera_query: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
 ) {
+    if is_3d() {
+        // The perspective rig is driven by camera_rig_input/apply_camera_rig.
+        return;
+    }
     let Ok((mut transform, mut projection)) = camera_query.single_mut() else {
         return;
     };
@@ -757,7 +767,11 @@ pub(crate) fn camera_x_bounds(scale: f32, window: Option<&Window>) -> Option<(f3
 pub(crate) fn cursor_world(
     windows: &Query<&Window, With<PrimaryWindow>>,
     camera_query: &Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    cam3d: &Query<(&Camera, &GlobalTransform), With<Camera3d>>,
 ) -> Option<Vec2> {
+    if is_3d() {
+        return cursor_ground_2d(windows, cam3d);
+    }
     let window = windows.single().ok()?;
     let cursor = window.cursor_position()?;
     let (camera, transform) = camera_query.single().ok()?;
