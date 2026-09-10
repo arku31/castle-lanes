@@ -1,6 +1,6 @@
 # Castle Lanes v0.2 Plan — "WC3-style 3D" (Option 3: full low-poly 3D)
 
-Status: **IN PROGRESS — M0 implemented (2026-09-10), awaiting user screenshot review.** This is the working plan for the 0.2 milestone.
+Status: **IMPLEMENTED — v0.2.0 tagged (2026-09-10).** M0-M6 gates exercised in-engine on the Steam Deck; see docs/HANDOFF.md for the session log and docs/screenshots for gate shots.
 v0.1 (tagged `v0.1.0`, crate version `0.1.0`) is the current 2D-sprite game: quick-play
 MVP, authoritative deterministic sim, 2D Bevy renderer, HUD verified at 1600×900.
 Governing roadmap for everything already shipped stays `plan.md`.

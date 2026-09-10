@@ -158,6 +158,7 @@ pub(crate) fn demo_automation(
     state: Res<SnapshotState>,
     mut selection: ResMut<BuildSelection>,
     mut hints: ResMut<MatchHints>,
+    time: Res<Time>,
 ) {
     if net.connected && net.player_id.is_none() && (net.auto_ready || net.auto_build_demo) {
         if !net.sent_auto_game {
@@ -214,25 +215,62 @@ pub(crate) fn demo_automation(
         }
     }
 
-    if !net.auto_build_demo || net.sent_auto_build {
+    if !net.auto_build_demo {
         return;
     }
     let Some(snapshot) = &state.snapshot else {
+        eprintln!("DEMO gate: no snapshot");
         return;
     };
     if snapshot.phase != MatchPhase::Playing {
+        eprintln!("DEMO gate: phase={:?}", snapshot.phase);
         return;
     }
+    hints.tooltip_suppressed = true;
+    // Showcase the placement UI: footprint tiles + ghost while auto-building.
+    if hints.step == 0 {
+        let race = current_player(snapshot, player_id)
+            .and_then(|player| player.race)
+            .unwrap_or(net.auto_race);
+        let balance = active_balance(&state);
+        let kind = balance.race(race).buildings[0];
+        selection.kind = Some(kind);
+        hints.step = 1;
+    }
+    // Place a spread of buildings so battles field real armies. The clock
+    // starts when the battle phase is first seen (last_join doubles as the
+    // keepalive and resets constantly).
+    if hints.battle_at == 0.0 {
+        hints.battle_at = time.elapsed_secs();
+    }
+    let since_battle = time.elapsed_secs() - hints.battle_at;
     let race = current_player(snapshot, player_id)
         .and_then(|player| player.race)
         .unwrap_or(net.auto_race);
     let balance = active_balance(&state);
-    let kind = balance.race(race).buildings[0];
-    // Showcase the placement UI: footprint tiles + ghost while auto-building.
-    if hints.step == 0 {
-        selection.kind = Some(kind);
-        hints.step = 1;
+    let kinds = balance.race(race).buildings.clone();
+    let spots: [(i32, i32); 8] = [
+        (0, 0),
+        (4, 1),
+        (8, 0),
+        (2, 3),
+        (6, 3),
+        (9, 1),
+        (4, 4),
+        (7, 4),
+    ];
+    let idx = net.demo_build_count;
+    let spots_n = spots.len() as u32;
+    let kinds_n = kinds.len() as u32;
+    if idx >= kinds_n.min(spots_n) {
+        net.sent_auto_build = true;
+        return;
     }
+    if since_battle < 8.0 + idx as f32 * 9.0 {
+        return;
+    }
+    let (cx, cy) = spots[(idx % spots_n) as usize];
+    let kind = kinds[(idx % kinds_n) as usize];
     send_client(
         &net,
         &ClientPacket::PlaceBuilding {
@@ -240,11 +278,11 @@ pub(crate) fn demo_automation(
             kind,
             lane: default_lane_for_team(net.team.unwrap_or(Team::Left)),
             zone: BuildZone::Front,
-            cell: GridCell { x: 0, y: 0 },
+            cell: GridCell { x: cx, y: cy },
             seq: None,
         },
     );
-    net.sent_auto_build = true;
+    net.demo_build_count += 1;
 }
 
 pub(crate) fn local_gold(state: &SnapshotState, net: &ClientNet) -> Option<i32> {

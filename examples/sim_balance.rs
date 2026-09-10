@@ -216,7 +216,8 @@ fn run_match(
     let mut seen_units: HashSet<u64> = HashSet::new();
     let mut unit_builds: HashMap<UnitKind, u32> = HashMap::new();
     let mut first_castle_hit: Option<f32> = None;
-    let mut lane_leader: [i8; 2] = [0, 0];
+    let mut lane_leader: [i8; castle_lanes::sim::Lane::ALL.len()] =
+        [0; castle_lanes::sim::Lane::ALL.len()];
     let mut lane_flips = 0u32;
     let mut flip_credits: HashMap<UnitKind, u32> = HashMap::new();
     let mut recent_spawns: Vec<(f32, UnitKind)> = Vec::new();
@@ -233,7 +234,7 @@ fn run_match(
         let elapsed = sim.elapsed_secs();
         if elapsed - last_sample >= 1.0 {
             last_sample = elapsed;
-            let mut pressure = [[0.0f32; 2]; 2];
+            let mut pressure = [[0.0f32; 2]; castle_lanes::sim::Lane::ALL.len()];
             for unit in &sim.units {
                 let side = sim.side_of(unit.owner).slot();
                 let lane = unit.lane as usize;

@@ -40,11 +40,19 @@ GROVE = {
     "leaf_bright": (0.55, 0.74, 0.28, 1),
     "wood": (0.55, 0.43, 0.28, 1),
     "crystal": (0.35, 0.78, 0.70, 1),
+    "obsidian": (0.22, 0.18, 0.14, 1),
+    "charcoal": (0.18, 0.15, 0.12, 1),
     "cloth": (0.45, 0.68, 0.35, 1),
     "skin": (0.62, 0.70, 0.42, 1),
     "stone": (0.48, 0.50, 0.44, 1),
     "accent": (0.55, 0.85, 0.40, 1),
     "iron": (0.40, 0.42, 0.46, 1),
+    "stone_dark": (0.3, 0.33, 0.28, 1),
+    "leather": (0.4, 0.3, 0.18, 1),
+    "timber": (0.4, 0.29, 0.18, 1),
+    "steel": (0.7, 0.74, 0.72, 1),
+    "gold": (0.85, 0.68, 0.28, 1),
+    "roof": (0.36, 0.5, 0.24, 1),
 }
 
 EMBER = {
@@ -59,6 +67,12 @@ EMBER = {
     "skin": (0.55, 0.38, 0.32, 1),
     "stone": (0.42, 0.36, 0.36, 1),
     "accent": (0.95, 0.45, 0.15, 1),
+    "stone_dark": (0.22, 0.18, 0.18, 1),
+    "leather": (0.38, 0.24, 0.16, 1),
+    "timber": (0.30, 0.20, 0.14, 1),
+    "steel": (0.66, 0.62, 0.60, 1),
+    "gold": (0.85, 0.60, 0.20, 1),
+    "roof": (0.3, 0.24, 0.26, 1),
 }
 
 
@@ -129,9 +143,9 @@ class Builder:
         (self.banner if banner else self.main).append(obj)
         return obj
 
-    def sphere(self, loc, radius, color, banner=False):
+    def sphere(self, loc, radius, color, banner=False, segments=10, ring_count=8):
         bpy.ops.mesh.primitive_uv_sphere_add(
-            segments=10, ring_count=8, radius=radius, location=loc
+            segments=segments, ring_count=ring_count, radius=radius, location=loc
         )
         obj = bpy.context.active_object
         bpy.ops.object.shade_smooth()

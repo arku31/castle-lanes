@@ -43,8 +43,8 @@ pub(crate) fn is_3d() -> bool {
 
 /// Camera pitch (plan-0.2.md §6) and the base distance that reproduces the
 /// v0.1 ortho scale 1.0 vertical coverage at fov 40°.
-const CAM_PITCH_DEG: f32 = 50.0;
-const CAM_BASE_DIST: f32 = 980.0;
+const CAM_PITCH_DEG: f32 = 56.0;
+const CAM_BASE_DIST: f32 = 780.0;
 const CAM_ZOOM_MIN: f32 = 0.35;
 const CAM_ZOOM_MAX: f32 = 2.4;
 const CAM_FOV_DEG: f32 = 40.0;
@@ -52,10 +52,10 @@ const CAM_FOV_DEG: f32 = 40.0;
 /// Terrain footprint and height profile (plan-0.2.md §4): castle highlands
 /// rise toward the map ends, lanes run as gentle fields, the middle is a
 /// sunken water channel spanned by stone bridges on each lane.
-const TER_X: (f32, f32) = (-1900.0, 1900.0);
-const TER_Z: (f32, f32) = (-340.0, 340.0);
+const TER_X: (f32, f32) = (-3000.0, 3000.0);
+const TER_Z: (f32, f32) = (-780.0, 780.0);
 const TER_STEP_X: f32 = 50.0;
-const TER_STEP_Z: f32 = 17.0;
+const TER_STEP_Z: f32 = 20.0;
 
 const WATER_Y: f32 = -11.0;
 const CHANNEL_DEPTH: f32 = -34.0;
@@ -118,11 +118,12 @@ pub(crate) fn world2_to_3d(pos: Vec2) -> Vec3 {
 
 /// glTF scenes built by tools/blender (plan-0.2.md §5). Missing or
 /// still-loading models fall back to the sprite billboards.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct ModelAssets {
     pub buildings: HashMap<String, Handle<Scene>>,
     pub units: HashMap<String, Handle<Scene>>,
     pub castles: HashMap<String, Handle<Scene>>,
+    pub doodads: HashMap<String, Handle<Scene>>,
 }
 
 pub(crate) const VANGUARD_BUILDING_MODELS: [&str; 8] = [
@@ -136,6 +137,28 @@ pub(crate) const VANGUARD_BUILDING_MODELS: [&str; 8] = [
     "vanguard_siege_workshop",
 ];
 
+pub(crate) const GROVE_BUILDING_MODELS: [&str; 8] = [
+    "grove_root_den",
+    "grove_thorn_spire",
+    "grove_bloom_well",
+    "grove_moss_nursery",
+    "grove_bark_bastion",
+    "grove_mire_pool",
+    "grove_vine_warren",
+    "grove_ancient_seed",
+];
+
+pub(crate) const EMBER_BUILDING_MODELS: [&str; 8] = [
+    "ember_cinder_pit",
+    "ember_flame_spire",
+    "ember_ash_mine",
+    "ember_spark_kennel",
+    "ember_obsidian_gate",
+    "ember_blaze_stable",
+    "ember_smoke_altar",
+    "ember_inferno_engine",
+];
+
 pub(crate) const VANGUARD_UNIT_MODELS: [&str; 7] = [
     "vanguard_guard",
     "vanguard_archer",
@@ -146,8 +169,36 @@ pub(crate) const VANGUARD_UNIT_MODELS: [&str; 7] = [
     "vanguard_ballista",
 ];
 
-pub(crate) fn setup_models(mut commands: Commands, assets: AssetServer) {
+pub(crate) const GROVE_UNIT_MODELS: [&str; 7] = [
+    "grove_bruiser",
+    "grove_needler",
+    "grove_sproutling",
+    "grove_barkguard",
+    "grove_mire_shaman",
+    "grove_vine_stalker",
+    "grove_treant_colossus",
+];
+
+pub(crate) const EMBER_UNIT_MODELS: [&str; 7] = [
+    "ember_runner",
+    "ember_caster",
+    "ember_spark_imp",
+    "ember_obsidian_guard",
+    "ember_smoke_witch",
+    "ember_fire_lancer",
+    "ember_cinder_engine",
+];
+
+pub(crate) const DOODAD_MODELS: [&str; 3] = ["tree_pine", "tree_round", "rock_boulder"];
+
+fn build_model_assets(assets: AssetServer) -> ModelAssets {
     let mut models = ModelAssets::default();
+    for name in DOODAD_MODELS {
+        models.doodads.insert(
+            name.to_string(),
+            assets.load(format!("models/doodads/{name}.glb#Scene0")),
+        );
+    }
     for name in VANGUARD_BUILDING_MODELS {
         models.buildings.insert(
             name.to_string(),
@@ -164,7 +215,7 @@ pub(crate) fn setup_models(mut commands: Commands, assets: AssetServer) {
         "vanguard_castle".to_string(),
         assets.load("models/vanguard/vanguard_castle.glb#Scene0"),
     );
-    commands.insert_resource(models);
+    models
 }
 
 /// `VanguardBarracks` -> `vanguard_barracks` (Blender manifest naming).
@@ -202,10 +253,17 @@ fn unit_model_name(kind: UnitKind) -> Option<String> {
     let base = match kind {
         UnitKind::VanguardArbalester => UnitKind::VanguardArcher,
         UnitKind::VanguardArcanist => UnitKind::VanguardBattleCleric,
+        UnitKind::GroveBrambleguard => UnitKind::GroveBarkguard,
+        UnitKind::GroveSpitefang => UnitKind::GroveVineStalker,
+        UnitKind::EmberMagmaBrute => UnitKind::EmberObsidianGuard,
+        UnitKind::EmberAshStalker => UnitKind::EmberRunner,
         _ => kind,
     };
     let name = snake_case(&format!("{base:?}"));
-    (VANGUARD_UNIT_MODELS.contains(&name.as_str())).then_some(name)
+    (VANGUARD_UNIT_MODELS.contains(&name.as_str())
+        || GROVE_UNIT_MODELS.contains(&name.as_str())
+        || EMBER_UNIT_MODELS.contains(&name.as_str()))
+    .then_some(name)
 }
 
 /// Client-side placement effects: recent placement cells drive both the
@@ -541,10 +599,14 @@ pub(crate) fn setup_3d_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut world_assets: ResMut<World3dAssets>,
+    scenes: Res<Assets<Scene>>,
+    asset_server: Res<AssetServer>,
 ) {
     if !is_3d() {
         return;
     }
+    let models = build_model_assets((*asset_server).clone());
+    commands.insert_resource(models.clone());
     // Shared build-footprint tile (beveled, textured) for the placement UI.
     world_assets.tile_mesh = Some(meshes.add(tile_mesh()));
     world_assets.tile_texture = Some(images.add(footprint_tile_texture()));
@@ -564,6 +626,11 @@ pub(crate) fn setup_3d_world(
             far: 7000.0,
             ..default()
         }),
+        DistanceFog {
+            color: Color::srgb(0.62, 0.72, 0.84),
+            falloff: FogFalloff::Exponential { density: 0.0003 },
+            ..default()
+        },
         Camera {
             order: 0,
             ..default()
@@ -573,8 +640,8 @@ pub(crate) fn setup_3d_world(
         // Camera-attached ambient override (bevy 0.18: AmbientLight is a
         // component on a camera), tuned warm for the outdoor scene.
         AmbientLight {
-            color: Color::srgb(0.80, 0.86, 1.00),
-            brightness: 700.0,
+            color: Color::srgb(0.72, 0.80, 1.00),
+            brightness: 260.0,
             affects_lightmapped_meshes: true,
         },
     ));
@@ -583,8 +650,10 @@ pub(crate) fn setup_3d_world(
     // light is the visual-consistency anchor (plan-0.2.md §6).
     commands.spawn((
         DirectionalLight {
-            illuminance: 15000.0,
+            illuminance: 20000.0,
             shadows_enabled: true,
+            shadow_depth_bias: 0.03,
+            shadow_normal_bias: 3.0,
             ..default()
         },
         CascadeShadowConfigBuilder {
@@ -598,6 +667,72 @@ pub(crate) fn setup_3d_world(
     commands.insert_resource(DirectionalLightShadowMap { size: 2048 });
 
     spawn_terrain(&mut commands, &mut res, &mut images);
+}
+
+/// Deferred: waits for the doodad GLBs to finish loading, then places them.
+pub(crate) fn spawn_doodads_when_loaded(
+    mut commands: Commands,
+    models: Res<ModelAssets>,
+    scenes: Res<Assets<Scene>>,
+    mut done: Local<bool>,
+) {
+    if *done || !models.doodads.values().all(|h| scenes.contains(h)) {
+        return;
+    }
+    *done = true;
+    spawn_doodads(&mut commands, &models, &scenes);
+}
+
+/// Deterministic vegetation/rocks framing the battlefield: wilderness ring,
+/// lane shoulders, terrace slopes. Skips the water channel and playfield.
+fn spawn_doodads(commands: &mut Commands, models: &ModelAssets, scenes: &Assets<Scene>) {
+    let names = ["tree_pine", "tree_pine", "tree_round", "rock_boulder"];
+    let mut placed = 0;
+    for i in 0..420u32 {
+        if placed >= 150 {
+            break;
+        }
+        let x2d = cl_hash(i, 1) * 6000.0 - 3000.0;
+        let y2d = cl_hash(i, 2) * 1500.0 - 750.0;
+        // Keep the playfield and its build zones clear.
+        if x2d.abs() < 1980.0 && y2d.abs() < 330.0 {
+            continue;
+        }
+        let pos = Vec2::new(x2d, y2d);
+        let h = ground_height(x2d, y2d);
+        if h < WATER_Y + 2.0 {
+            continue;
+        }
+        // Lane-shoulder trees also line the roads inside the map frame.
+        let mut near_road = false;
+        for &lane_y in &LANE_ZS_2D {
+            let d = (y2d - lane_y).abs();
+            if (52.0..80.0).contains(&d) && x2d.abs() < 1900.0 {
+                near_road = true;
+            }
+        }
+        if !near_road && y2d.abs() < 340.0 && x2d.abs() < 1950.0 {
+            continue;
+        }
+        let name = names[(i as usize) % names.len()];
+        let Some(handle) = models.doodads.get(name).filter(|h| scenes.contains(*h)) else {
+            continue;
+        };
+        let yaw = cl_hash(i, 3) * std::f32::consts::TAU;
+        let scale = 0.8 + cl_hash(i, 4) * 0.7;
+        commands.spawn((
+            SceneRoot(handle.clone()),
+            Transform::from_translation(Vec3::new(x2d, h, -y2d))
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::splat(scale)),
+        ));
+        placed += 1;
+    }
+    println!("doodads placed: {placed}");
+}
+
+fn cl_hash(i: u32, salt: u32) -> f32 {
+    hash_unit(i.wrapping_mul(31), salt)
 }
 
 /// Flat XZ quad with UVs for the footprint tile texture.
@@ -809,19 +944,21 @@ fn terrain_albedo_texture() -> Image {
 }
 
 pub(crate) fn terrain_color(x2d: f32, y2d: f32, h: f32) -> Color {
-    let grass_a = Color::srgb(0.34, 0.47, 0.22);
-    let grass_b = Color::srgb(0.29, 0.42, 0.19);
-    let dirt = Color::srgb(0.50, 0.41, 0.27);
+    let grass_a = Color::srgb(0.32, 0.46, 0.20);
+    let grass_b = Color::srgb(0.38, 0.50, 0.22);
+    let wilderness = Color::srgb(0.24, 0.36, 0.17);
+    let dirt = Color::srgb(0.52, 0.42, 0.27);
     let stone = Color::srgb(0.53, 0.50, 0.44);
     let sand = Color::srgb(0.58, 0.53, 0.40);
     let bridge_stone = Color::srgb(0.46, 0.44, 0.40);
 
     let mut color = grass_a.mix(&grass_b, value_noise(x2d, y2d));
+    // Broad, coherent lane roads with soft shoulders.
     let mut road = 0.0_f32;
     for &lane_y in &LANE_ZS_2D {
-        road = road.max(1.0 - smoothstep(24.0, 38.0, (y2d - lane_y).abs()));
+        road = road.max(1.0 - smoothstep(30.0, 52.0, (y2d - lane_y).abs()));
     }
-    color = color.mix(&dirt, road * 0.85);
+    color = color.mix(&dirt, road * 0.9);
     color = color.mix(&stone, smoothstep(0.35, 0.8, rise_at(x2d)));
     if h < WATER_Y + 4.0 {
         color = color.mix(&sand, 0.8);
@@ -832,7 +969,10 @@ pub(crate) fn terrain_color(x2d: f32, y2d: f32, h: f32) -> Color {
         let along = 1.0 - smoothstep(112.0, 160.0, x2d.abs());
         deck = deck.max(across * along);
     }
-    color.mix(&bridge_stone, deck)
+    color = color.mix(&bridge_stone, deck);
+    // Wilderness ring beyond the playable map frame.
+    let outside = smoothstep(300.0, 360.0, y2d.abs()).max(smoothstep(1950.0, 2100.0, x2d.abs()));
+    color.mix(&wilderness, outside)
 }
 
 // ---- Static scene (buildings, castles, zone tiles) ----
@@ -947,7 +1087,17 @@ pub(crate) fn sync_static_3d(
                     .spawn((
                         Mesh3d(mesh.clone()),
                         MeshMaterial3d(res.flat_mat(Color::srgba(0.0, 0.0, 0.0, 0.88))),
-                        Transform::from_translation(world2_to_3d(pos) + Vec3::Y * 0.9),
+                        Transform::from_translation(Vec3::new(
+                            pos.x,
+                            // Average the four corners so tiles hug slopes.
+                            (ground_height(pos.x - 20.0, pos.y - 10.0)
+                                + ground_height(pos.x + 20.0, pos.y - 10.0)
+                                + ground_height(pos.x - 20.0, pos.y + 10.0)
+                                + ground_height(pos.x + 20.0, pos.y + 10.0))
+                                * 0.25
+                                + 1.1,
+                            -pos.y,
+                        )),
                         Visibility::Hidden,
                         FogTile { col, row },
                     ))
@@ -1616,14 +1766,14 @@ pub(crate) fn update_fog_tiles_3d(
         let pos = fog_cell_center(tile.col, tile.row);
         let reveal = world_reveal_strength(snapshot, team, pos);
         let explored = fog.explored[fog_index(tile.col, tile.row)];
-        let (alpha, hidden) = if reveal > 0.96 {
+        let (alpha, hidden) = if reveal > 0.45 {
             (0.0, true)
         } else if reveal > 0.0 {
             (0.20 * (1.0 - reveal), false)
         } else if explored {
-            (0.53, false)
+            (0.22, false)
         } else {
-            (0.88, false)
+            (0.78, false)
         };
         if hidden {
             *visibility = Visibility::Hidden;

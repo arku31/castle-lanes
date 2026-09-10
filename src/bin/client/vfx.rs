@@ -224,6 +224,7 @@ pub(crate) fn detect_combat_vfx(
     tracker.initialized = true;
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn update_combat_vfx(
     mut commands: Commands,
     time: Res<Time>,
@@ -237,7 +238,7 @@ pub(crate) fn update_combat_vfx(
             Option<&mut TextColor>,
             Option<&mut Sprite>,
         ),
-        Without<VfxBillboard>,
+        (Without<VfxBillboard>, Without<CombatText3d>),
     >,
     vfx3d: Query<
         (
@@ -248,8 +249,23 @@ pub(crate) fn update_combat_vfx(
         ),
         With<VfxBillboard>,
     >,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cam3d: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    mut texts: Query<
+        (
+            Entity,
+            &mut CombatText3d,
+            &mut Transform,
+            &mut TextColor,
+            &CombatVfx,
+        ),
+        Without<VfxBillboard>,
+    >,
 ) {
+    // texts is passed through by reference below
+
     if is_3d() {
+        update_combat_text_3d(&mut commands, &time, &windows, &cam3d, &mut texts);
         update_combat_vfx_3d(commands, time, materials, vfx3d);
         return;
     }
@@ -397,9 +413,29 @@ pub(crate) fn spawn_combat_impact(
     castle_hit: bool,
 ) {
     if is_3d() {
-        // Bursts and streaks now; floating damage numbers land in M5.
         spawn_impact_3d(res, commands, target, attack_type, castle_hit);
         spawn_streak_3d(res, commands, source, target, attack_type);
+        let big_hit = damage >= if castle_hit { 12 } else { 8 };
+        let text = if big_hit {
+            format!("{damage}!")
+        } else {
+            damage.to_string()
+        };
+        let base = world2_to_3d(target) + Vec3::Y * 34.0;
+        spawn_damage_text_3d(
+            commands,
+            base + Vec3::Y * 2.0,
+            &text,
+            Color::srgb(0.05, 0.02, 0.01),
+            if castle_hit { 34.0 } else { 27.0 },
+        );
+        spawn_damage_text_3d(
+            commands,
+            base,
+            &text,
+            damage_number_color(attack_type, castle_hit),
+            if castle_hit { 32.0 } else { 25.0 },
+        );
         return;
     }
     let color = damage_number_color(attack_type, castle_hit);
@@ -466,6 +502,79 @@ fn spawn_combat_impact_budgeted(
     }
 }
 
+/// World-anchored floating text for the 3D renderer; the updater projects
+/// `world` to screen space every frame (M5 overlay pass, plan-0.2.md §8).
+#[derive(Component)]
+pub(crate) struct CombatText3d {
+    pub world: Vec3,
+    pub rise: f32,
+}
+
+pub(crate) fn spawn_damage_text_3d(
+    commands: &mut Commands,
+    world: Vec3,
+    text: &str,
+    color: Color,
+    size: f32,
+) {
+    commands.spawn((
+        Text2d::new(text),
+        TextFont::from_font_size(size),
+        TextColor(color),
+        TextLayout::new_with_justify(Justify::Center),
+        Anchor::CENTER,
+        Transform::from_xyz(-9999.0, -9999.0, 0.0),
+        CombatText3d { world, rise: 0.0 },
+        CombatVfx {
+            lifetime: 0.95,
+            max_lifetime: 0.95,
+            velocity: Vec2::ZERO,
+        },
+    ));
+}
+
+pub(crate) fn update_combat_text_3d(
+    commands: &mut Commands,
+    time: &Time,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    cam: &Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    query: &mut Query<
+        (
+            Entity,
+            &mut CombatText3d,
+            &mut Transform,
+            &mut TextColor,
+            &CombatVfx,
+        ),
+        Without<VfxBillboard>,
+    >,
+) {
+    let Ok((camera, cam_transform)) = cam.single() else {
+        return;
+    };
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let dt = time.delta_secs();
+    for (entity, mut text, mut transform, mut color, vfx) in &mut *query {
+        text.rise += 46.0 * dt;
+        let pos = text.world + Vec3::Y * text.rise;
+        let Ok(screen) = camera.world_to_viewport(cam_transform, pos) else {
+            continue;
+        };
+        transform.translation = Vec3::new(
+            screen.x - window.width() / 2.0,
+            window.height() / 2.0 - screen.y,
+            0.0,
+        );
+        let alpha = (vfx.lifetime / vfx.max_lifetime).clamp(0.0, 1.0);
+        color.0 = color.0.with_alpha(alpha);
+        if vfx.lifetime <= 0.0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 pub(crate) fn spawn_damage_text(
     commands: &mut Commands,
     text: &str,
@@ -498,7 +607,15 @@ pub(crate) fn spawn_bounty_text(
 ) {
     let accent = team_color(team);
     if is_3d() {
-        // Coin sparkles now; the floating "+Ng" text lands in M5.
+        let base = world2_to_3d(pos) + Vec3::Y * 30.0;
+        spawn_damage_text_3d(
+            commands,
+            base + Vec3::Y * 3.0,
+            &format!("+{amount}g"),
+            Color::srgb(0.08, 0.04, 0.0),
+            30.0,
+        );
+        spawn_damage_text_3d(commands, base, &format!("+{amount}g"), accent, 28.0);
         for offset in [
             Vec2::new(-16.0, -2.0),
             Vec2::new(19.0, 3.0),

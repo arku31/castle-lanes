@@ -104,6 +104,39 @@ Current batch in `docs/screenshots/`: `battle.png` (mid-lane clash), `battle_arm
 
 # Session addendum — 2026-09-10 (v0.2 M0 on the Steam Deck)
 
+## v0.2.0 status: M0-M6 implemented (this session)
+
+- M1: grid only while placing (footprint tiles w/ beveled texture), pulsing
+  ghost, animated build circle, 3 s scaffold on fresh buildings.
+- M2/M3: Blender pipeline (`tools/blender/`: cl_lib part library +
+  build_asset manifest + render_preview rig); 51 models: 3 faction castles,
+  24 buildings, 21 units, 3 doodads — all glTF, vertex-colored, budgeted.
+  Engine: `ModelAssets` registry, SceneRoot spawn w/ billboard fallback,
+  velocity facing, 1.35x unit scale.
+- M4: grove + ember sets + 150 deterministic doodads (wilderness ring,
+  lane shoulders).
+- M5: combat damage/bounty text via world->screen projection onto the UI
+  layer (`CombatText3d`); distance haze (DistanceFog); perf measured
+  **60 fps @ ~2400 entities** in release on the Deck (debug is ~10 fps —
+  always perf-test release builds).
+- M6: version 0.2.0, README refresh, balance report
+  `docs/balance-report-0.2.md` (25 games/pairing; note Grove currently
+  hard-counters Vanguard 0-100 — balance tuning is follow-up work).
+- sim_balance fixed: lane arrays assumed 2 lanes, team play has 4
+  (`Lane::ALL.len()`).
+
+## M0-M6 detail: what was fixed on the way
+
+- Triangle winding on the terrain was inverted (facets culled from above):
+  flat-shaded heightfield quads must be CCW seen from above; normal =
+  e2.cross(e1) with that ordering.
+- `--camera-x` is now parsed (was declared but ignored since v0.1).
+- Demo multi-build: `demo_build_count` + `MatchHints.battle_at` schedule 8
+  placements at 9 s intervals (last_join doubles as keepalive and resets
+  constantly — never gate on it).
+- BuildFx/`note_placement` drives the build circle + scaffold; placements
+  are client-side only (the sim has no build-time).
+
 ## M0 (3D foundations) is implemented — pending user screenshot review
 
 `src/bin/client/render3d.rs` renders the world with a perspective camera:

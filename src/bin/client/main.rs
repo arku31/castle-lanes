@@ -119,9 +119,9 @@ const REVEAL_BUILDING_RADIUS: f32 = 150.0;
 
 const REVEAL_UNIT_RADIUS: f32 = 185.0;
 
-const FOG_COLUMNS: usize = 96;
+const FOG_COLUMNS: usize = 72;
 
-const FOG_ROWS: usize = 34;
+const FOG_ROWS: usize = 26;
 
 const FOG_SOFT_EDGE: f32 = 82.0;
 
@@ -166,6 +166,7 @@ struct ClientNet {
     queued_for_match: bool,
     profile_wins: u32,
     profile_losses: u32,
+    demo_build_count: u32,
 }
 
 /// An unacknowledged placement intent, retried until acked or expired
@@ -308,6 +309,7 @@ fn run_replay(path: std::path::PathBuf) {
         queued_for_match: false,
         profile_wins: 0,
         profile_losses: 0,
+        demo_build_count: 0,
     };
     // replay client: same window/UI/render stack, driven by the local sim
     App::new()
@@ -375,6 +377,7 @@ fn run_replay(path: std::path::PathBuf) {
             (
                 update_ui_layout,
                 auto_screenshots,
+                spawn_doodads_when_loaded,
                 replay_advance,
                 replay_input,
                 camera_controls,
@@ -401,6 +404,10 @@ fn run_replay(path: std::path::PathBuf) {
 #[derive(Resource, Default)]
 struct MatchHints {
     step: usize,
+    /// Battle-phase start time for the demo build scheduler.
+    battle_at: f32,
+    /// Demo captures: keep the build tooltip off the battlefield.
+    tooltip_suppressed: bool,
 }
 
 /// In-engine screenshot capture (plan-0.2.md M0 gate): F12 saves a manual
@@ -448,6 +455,23 @@ fn auto_screenshots(
 impl DemoShots {
     fn interval_secs(&self) -> f32 {
         2.5
+    }
+}
+
+/// Perf report for the plan-0.2.md §9 budget (60 fps @ 300 units).
+pub(crate) fn report_fps(
+    time: Res<Time>,
+    mut frames: Local<u32>,
+    mut window: Local<f32>,
+    entities: Query<Entity>,
+) {
+    *frames += 1;
+    *window += time.delta_secs();
+    if *window >= 5.0 {
+        let fps = *frames as f32 / *window;
+        println!("PERF fps={:.1} entities={}", fps, entities.iter().count());
+        *frames = 0;
+        *window = 0.0;
     }
 }
 
@@ -928,6 +952,7 @@ fn main() {
             queued_for_match: false,
             profile_wins: 0,
             profile_losses: 0,
+            demo_build_count: 0,
         })
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
@@ -962,6 +987,10 @@ fn main() {
             counter: 0,
             next_at: 0.0,
         })
+        .add_systems(
+            Update,
+            report_fps.run_if(|demo: Res<DemoShots>| demo.enabled),
+        )
         .add_systems(Startup, setup)
         .add_systems(Startup, setup_3d_world)
         .add_systems(
@@ -997,6 +1026,7 @@ fn main() {
                         update_placement_preview,
                         update_build_fx,
                         orient_billboards,
+                        spawn_doodads_when_loaded,
                         redraw_game_ui,
                         pin_ui_to_camera,
                         animate_grass,
@@ -1065,6 +1095,11 @@ fn parse_args() -> ClientOptions {
             }
             "--legacy-json" => {
                 legacy_json = true;
+            }
+            // plan-0.2.md §6: the perspective rig finally uses this flag.
+            "--camera-x" if idx + 1 < args.len() => {
+                camera_x = Some(argv_parse_fraction(&args[idx + 1]));
+                idx += 1;
             }
             // plan-0.2.md: v0.1 2D renderer stays available as escape hatch.
             "--renderer2d" => {
@@ -1189,7 +1224,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         spawn_grass_background(&mut commands);
         spawn_static_board(&mut commands, None, 2, None);
     } else {
-        setup_models(commands.reborrow(), asset_server.clone());
+        // ModelAssets is built inside setup_3d_world (needs AssetServer).
     }
     let fonts = FontAssets {
         display: asset_server.load("fonts/MedievalSharp.ttf"),

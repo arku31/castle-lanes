@@ -1,18 +1,21 @@
 # Castle Lanes
 
-Castle Lanes is a native desktop Rust/Bevy MVP inspired by the builder-autobattler shape of classic custom RTS maps, using original names and original 2D isometric-ish art.
+Castle Lanes is a native desktop Rust/Bevy game inspired by the builder-autobattler shape of classic custom RTS maps (original names and art). Authoritative deterministic UDP server, procedural low-poly 3D world with one shared sun, Blender-authored glTF armies, and a Warcraft-3-style build/placement loop.
 
-**Current release: v0.1.0** (2D-sprite MVP). The next milestone is a Warcraft-3-style low-poly 3D presentation overhaul — plan: [docs/plan-0.2.md](docs/plan-0.2.md).
+**Current release: v0.2.0** — the "WC3-style low-poly 3D" overhaul (plan: [docs/plan-0.2.md](docs/plan-0.2.md)). Highlights:
 
-![An Ember army besieging the blue Vanguard castle](docs/screenshots/battle.png)
+- Heightfield terrain: castle highlands, lane roads, a water channel with stone bridges, and a wilderness ring with trees and rocks.
+- One shadow-mapped sun + distance haze; every unit and building is a Blender-authored low-poly glTF model (models are code under `tools/blender/`), with the v0.1 2D renderer kept behind `--renderer2d`.
+- WC3-style placement: grid appears only while building, ghost preview with valid/invalid tint, animated build circle, scaffold state on fresh buildings.
+- Same deterministic sim and protocol as v0.1 — replays, matchmaking, and team play unchanged.
 
-![Vanguard defenders marching out to meet the Ember push](docs/screenshots/battle_armies.png)
+![Vanguard army and buildings on the 3D battlefield](docs/screenshots/m0_battle_3d.png)
 
 More views — the HUD, lobby, and overlays all fit a 1600×900 window without scrolling:
 
-| Siege push reaching the castle | Server lobby browser |
+| Victory on the 3D field | 2D fallback renderer (--renderer2d) |
 | --- | --- |
-| ![Ember push reaching the Vanguard castle](docs/screenshots/siege.png) | ![Game lobby browser listing open games](docs/screenshots/lobby.png) |
+| ![Game over screen on the 3D battlefield](docs/screenshots/m0_gameover_3d.png) | ![v0.1 2D renderer fallback](docs/screenshots/m0_2d_fallback.png) |
 
 | Help overlay (H) | Settings overlay (O) |
 | --- | --- |

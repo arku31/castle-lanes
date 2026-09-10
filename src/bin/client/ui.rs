@@ -102,7 +102,7 @@ pub(crate) fn redraw_game_ui(
             );
         }
     }
-    if !race_popup_open {
+    if !race_popup_open && !hints.tooltip_suppressed {
         if let Some(kind) = hover.kind {
             spawn_build_tooltip(&mut commands, &balance, kind, &layout);
         }
