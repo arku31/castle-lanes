@@ -1,14 +1,14 @@
 //! input systems split out of the monolithic client (plan.md Phase 1 item 8).
 #![allow(unused_imports)]
-use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
-use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 pub(crate) use super::audio::*;
 pub(crate) use super::net::*;
 pub(crate) use super::scene::*;
 pub(crate) use super::ui::*;
 pub(crate) use super::vfx::*;
 use super::*;
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 pub(crate) fn menu_and_lobby_input(
     keys: Res<ButtonInput<KeyCode>>,

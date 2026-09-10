@@ -940,10 +940,7 @@ pub(crate) fn command_button_center(idx: usize, layout: &UiLayout) -> Vec2 {
     let origin = layout.command_grid_origin();
     let col = idx % 3;
     let row = idx / 3;
-    Vec2::new(
-        origin.x + col as f32 * 58.0,
-        origin.y - row as f32 * 50.0,
-    )
+    Vec2::new(origin.x + col as f32 * 58.0, origin.y - row as f32 * 50.0)
 }
 
 pub(crate) fn race_button_center(idx: usize) -> Vec2 {
@@ -1393,12 +1390,15 @@ pub(crate) fn spawn_minimap(
     for building in &snapshot.buildings {
         if !is_building_visible(snapshot, viewer_team, building) {
             if is_enemy_building_scouted(snapshot, fog, viewer_team, building) {
-                let pos = minimap_world_to_ui(cell_to_world(
-                    side_of_player(snapshot, building.owner),
-                    building.lane,
-                    building.zone,
-                    building.cell,
-                ), layout);
+                let pos = minimap_world_to_ui(
+                    cell_to_world(
+                        side_of_player(snapshot, building.owner),
+                        building.lane,
+                        building.zone,
+                        building.cell,
+                    ),
+                    layout,
+                );
                 spawn_ui_rect(
                     commands,
                     pos,
@@ -1410,7 +1410,10 @@ pub(crate) fn spawn_minimap(
             continue;
         }
         let side = side_of_player(snapshot, building.owner);
-        let pos = minimap_world_to_ui(cell_to_world(side, building.lane, building.zone, building.cell), layout);
+        let pos = minimap_world_to_ui(
+            cell_to_world(side, building.lane, building.zone, building.cell),
+            layout,
+        );
         spawn_ui_rect(
             commands,
             pos,

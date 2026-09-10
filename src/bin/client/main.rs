@@ -104,10 +104,7 @@ impl UiLayout {
     }
 }
 
-fn update_ui_layout(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut layout: ResMut<UiLayout>,
-) {
+fn update_ui_layout(windows: Query<&Window, With<PrimaryWindow>>, mut layout: ResMut<UiLayout>) {
     if let Ok(window) = windows.single() {
         *layout = UiLayout::from_window(window);
     }
