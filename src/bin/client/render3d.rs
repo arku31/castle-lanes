@@ -43,8 +43,8 @@ pub(crate) fn is_3d() -> bool {
 
 /// Camera pitch (plan-0.2.md §6) and the base distance that reproduces the
 /// v0.1 ortho scale 1.0 vertical coverage at fov 40°.
-const CAM_PITCH_DEG: f32 = 56.0;
-const CAM_BASE_DIST: f32 = 780.0;
+const CAM_PITCH_DEG: f32 = 48.0;
+const CAM_BASE_DIST: f32 = 620.0;
 const CAM_ZOOM_MIN: f32 = 0.35;
 const CAM_ZOOM_MAX: f32 = 2.4;
 const CAM_FOV_DEG: f32 = 40.0;
@@ -587,7 +587,7 @@ impl CameraRig {
 
     pub(crate) fn home_target(team: Team) -> Vec2 {
         let castle_x = lane_to_world(team.castle_pos());
-        Vec2::new(castle_x + team.direction() * 290.0, 0.0)
+        Vec2::new(castle_x + team.direction() * 320.0, 60.0)
     }
 }
 
@@ -650,7 +650,7 @@ pub(crate) fn setup_3d_world(
     // light is the visual-consistency anchor (plan-0.2.md §6).
     commands.spawn((
         DirectionalLight {
-            illuminance: 20000.0,
+            illuminance: 9000.0,
             shadows_enabled: true,
             shadow_depth_bias: 0.03,
             shadow_normal_bias: 3.0,
@@ -1079,7 +1079,7 @@ pub(crate) fn sync_static_3d(
         };
         let tile_w = MAP_W / FOG_COLUMNS as f32;
         let tile_h = MAP_H / FOG_ROWS as f32;
-        let mesh = res.flat_quad(tile_w + 1.0, tile_h + 1.0);
+        let mesh = res.flat_quad(tile_w + 14.0, tile_h + 12.0);
         for row in 0..FOG_ROWS {
             for col in 0..FOG_COLUMNS {
                 let pos = fog_cell_center(col, row);
@@ -1090,12 +1090,12 @@ pub(crate) fn sync_static_3d(
                         Transform::from_translation(Vec3::new(
                             pos.x,
                             // Average the four corners so tiles hug slopes.
-                            (ground_height(pos.x - 20.0, pos.y - 10.0)
-                                + ground_height(pos.x + 20.0, pos.y - 10.0)
-                                + ground_height(pos.x - 20.0, pos.y + 10.0)
-                                + ground_height(pos.x + 20.0, pos.y + 10.0))
+                            (ground_height(pos.x - 45.0, pos.y - 25.0)
+                                + ground_height(pos.x + 45.0, pos.y - 25.0)
+                                + ground_height(pos.x - 45.0, pos.y + 25.0)
+                                + ground_height(pos.x + 45.0, pos.y + 25.0))
                                 * 0.25
-                                + 1.1,
+                                + 2.2,
                             -pos.y,
                         )),
                         Visibility::Hidden,
@@ -1771,9 +1771,9 @@ pub(crate) fn update_fog_tiles_3d(
         } else if reveal > 0.0 {
             (0.20 * (1.0 - reveal), false)
         } else if explored {
-            (0.22, false)
+            (0.30, false)
         } else {
-            (0.78, false)
+            (0.88, false)
         };
         if hidden {
             *visibility = Visibility::Hidden;
@@ -1935,11 +1935,11 @@ pub(crate) fn camera_rig_input(
         }
     }
     if forward != 0.0 || strafe != 0.0 {
-        // Screen-up is toward the enemy (camera forward); screen-right maps
-        // to -Y2D because the 3D Z axis flips the v0.1 map vertical.
+        // Screen-up pans across the lanes (map "north"), screen-right pans
+        // toward the enemy. Both follow the viewer's mirrored frame.
         let speed = 620.0 * rig.zoom * time.delta_secs();
-        rig.target.x += forward * rig.look_sign * speed;
-        rig.target.y -= strafe * speed;
+        rig.target.x += strafe * rig.look_sign * speed;
+        rig.target.y -= forward * rig.look_sign * speed;
         rig.target.x = rig.target.x.clamp(-1520.0, 1520.0);
         rig.target.y = rig.target.y.clamp(-330.0, 330.0);
     }
@@ -1968,8 +1968,16 @@ pub(crate) fn apply_camera_rig(
     let pitch = CAM_PITCH_DEG.to_radians();
     let dist = rig.dist();
     let target3 = world2_to_3d(rig.target);
-    let look = Vec3::new(rig.look_sign, 0.0, 0.0);
-    transform.translation = target3 - look * (dist * pitch.cos()) + Vec3::Y * (dist * pitch.sin());
+    // WC3 presentation: the map length runs LEFT-TO-RIGHT on screen and
+    // units march home->enemy left-to-right. The camera therefore sits at
+    // the lane-spread side of the target (south for the Left viewer, north
+    // for the Right viewer) looking across the field, tilted down.
+    let side = rig.look_sign;
+    transform.translation = Vec3::new(
+        target3.x,
+        target3.y + dist * pitch.sin(),
+        target3.z + side * dist * pitch.cos(),
+    );
     transform.look_at(target3, Vec3::Y);
 }
 

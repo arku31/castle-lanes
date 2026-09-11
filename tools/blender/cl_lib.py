@@ -19,10 +19,10 @@ import math
 # ---------------------------------------------------------------- palettes
 
 VANGUARD = {
-    "stone": (0.52, 0.56, 0.63, 1),
-    "stone_dark": (0.38, 0.41, 0.47, 1),
+    "stone": (0.42, 0.47, 0.56, 1),
+    "stone_dark": (0.28, 0.31, 0.38, 1),
     "timber": (0.42, 0.29, 0.18, 1),
-    "roof": (0.22, 0.32, 0.55, 1),
+    "roof": (0.15, 0.26, 0.62, 1),
     "gold": (0.85, 0.68, 0.28, 1),
     "cloth": (0.28, 0.46, 0.85, 1),
     "steel": (0.72, 0.75, 0.80, 1),
@@ -33,11 +33,11 @@ VANGUARD = {
 }
 
 GROVE = {
-    "bark": (0.36, 0.28, 0.18, 1),
-    "bark_dark": (0.27, 0.21, 0.14, 1),
+    "bark": (0.30, 0.22, 0.13, 1),
+    "bark_dark": (0.21, 0.16, 0.10, 1),
     "moss": (0.32, 0.46, 0.22, 1),
-    "leaf": (0.42, 0.62, 0.24, 1),
-    "leaf_bright": (0.55, 0.74, 0.28, 1),
+    "leaf": (0.34, 0.58, 0.16, 1),
+    "leaf_bright": (0.48, 0.72, 0.20, 1),
     "wood": (0.55, 0.43, 0.28, 1),
     "crystal": (0.35, 0.78, 0.70, 1),
     "obsidian": (0.22, 0.18, 0.14, 1),
@@ -56,8 +56,8 @@ GROVE = {
 }
 
 EMBER = {
-    "obsidian": (0.16, 0.13, 0.15, 1),
-    "charcoal": (0.24, 0.21, 0.22, 1),
+    "obsidian": (0.10, 0.08, 0.10, 1),
+    "charcoal": (0.17, 0.14, 0.15, 1),
     "ash": (0.45, 0.42, 0.42, 1),
     "magma": (0.95, 0.42, 0.10, 1),
     "ember": (0.88, 0.25, 0.12, 1),
@@ -96,13 +96,22 @@ def _material(name, color, banner=False):
 
 
 def _apply_color(obj, color):
-    """Store the part color as a corner color attribute (exports as COLOR_0)."""
+    """Store the part color as a corner color attribute (exports as COLOR_0).
+
+    glTF COLOR_0 is linear-space: convert the sRGB palette values so the
+    engine renders the intended (saturated) colors instead of washing out.
+    """
     mesh = obj.data
     loops = len(mesh.loops)
     attr = mesh.color_attributes.new(name="col", type="BYTE_COLOR", domain="CORNER")
+
+    def srgb_to_linear(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    lin = [srgb_to_linear(v) for v in color]
     flat = []
     for _ in range(loops):
-        flat.extend(color)
+        flat.extend(lin)
     attr.data.foreach_set("color", flat)
 
 
@@ -235,27 +244,38 @@ def finish_and_export(builder, name, out_path, budget):
 # ---------------------------------------------------------------- units
 
 def unit_base(b, pal, scale=1.0, bulky=0.0, helmet=None, cloak=False):
-    """Shared humanoid: legs, torso, head; faces +X. Height ~46*scale."""
+    """Shared humanoid, WC3 proportions: big head, broad shoulders, chunky
+    feet, separated arms. Faces +X. Height ~46*scale."""
     h = scale
     w = 1.0 + bulky * 0.5
-    # legs
-    b.box((-2.5 * h, -3.5 * w, 9 * h), (4.5 * h, 3.2 * w, 18 * h), pal["leather"])
-    b.box((-2.5 * h, 3.5 * w, 9 * h), (4.5 * h, 3.2 * w, 18 * h), pal["leather"])
-    # torso
-    b.box((1 * h, 0, 22 * h), (11 * h, 11 * w, 16 * h), pal["cloth"])
+    # chunky legs + feet
+    b.box((-2.5 * h, -3.5 * w, 9 * h), (5.5 * h, 3.6 * w, 18 * h), pal["leather"])
+    b.box((-2.5 * h, 3.5 * w, 9 * h), (5.5 * h, 3.6 * w, 18 * h), pal["leather"])
+    b.box((-1.5 * h, -3.5 * w, 1.5 * h), (8 * h, 4.6 * w, 3 * h), pal["leather"])
+    b.box((-1.5 * h, 3.5 * w, 1.5 * h), (8 * h, 4.6 * w, 3 * h), pal["leather"])
+    # torso: broad at the shoulders, faction tabard front
+    b.box((1 * h, 0, 22 * h), (13 * h, 13 * w, 16 * h), pal["cloth"])
+    b.box((6 * h, 0, 22 * h), (2.5 * h, 12 * w, 14 * h), pal["accent"])
     # belt
-    b.box((1 * h, 0, 15 * h), (11.5 * h, 11.5 * w, 3 * h), pal["leather"])
-    # head
-    b.box((2 * h, 0, 34 * h), (8 * h, 7.5 * w, 8 * h), pal["skin"])
+    b.box((1 * h, 0, 15 * h), (13.5 * h, 13.5 * w, 3.5 * h), pal["leather"])
+    # pauldrons (broad shoulder line)
+    for sy in (-7.5 * w, 7.5 * w):
+        b.box((2 * h, sy, 29 * h), (9 * h, 4.5 * w, 4.5 * h), pal["steel"])
+    # separated arms + hands
+    for sy in (-7.5 * w, 7.5 * w):
+        b.box((1.5 * h, sy, 21 * h), (4 * h, 3.2 * w, 12 * h), pal["cloth"])
+        b.box((3 * h, sy, 14 * h), (4.5 * h, 3.4 * w, 3.4 * h), pal["skin"])
+    # big head
+    b.box((3 * h, 0, 35 * h), (9.5 * h, 9 * w, 9.5 * h), pal["skin"])
     if helmet == "pot":
-        b.box((2 * h, 0, 37.5 * h), (10 * h, 10 * w, 4 * h), pal["steel"])
+        b.box((3 * h, 0, 38.5 * h), (12 * h, 12 * w, 4.5 * h), pal["steel"])
     elif helmet == "hood":
-        b.box((1.5 * h, 0, 35 * h), (9.5 * h, 9 * w, 9 * h), pal["cloth"])
+        b.box((2 * h, 0, 36 * h), (11 * h, 10.5 * w, 10 * h), pal["cloth"])
     elif helmet == "helm":
-        b.box((2 * h, 0, 36.5 * h), (9 * h, 8.5 * w, 6 * h), pal["steel"])
-        b.cone((2 * h, 0, 43 * h), 2 * h, 7 * h, pal["accent"])
+        b.box((3 * h, 0, 37.5 * h), (11 * h, 10 * w, 6.5 * h), pal["steel"])
+        b.cone((3 * h, 0, 44.5 * h), 2.4 * h, 8 * h, pal["accent"])
     if cloak:
-        b.box((-3.5 * h, 0, 22 * h), (2.5 * h, 11 * w, 20 * h), pal["accent"])
+        b.box((-4.5 * h, 0, 22 * h), (2.5 * h, 13 * w, 22 * h), pal["accent"])
 
 
 def weapon_sword(b, pal, h=1.0):
