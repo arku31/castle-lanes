@@ -111,8 +111,15 @@ fn main() {
 
     let races = RaceKind::ALL;
     let mut outcomes: Vec<MatchOutcome> = Vec::new();
+    let only_pairing = std::env::var("SIM_ONLY_PAIRING").ok();
     for (left_index, &left_race) in races.iter().enumerate() {
         for &right_race in &races[left_index..] {
+            if let Some(filter) = &only_pairing {
+                let pair = format!("{left_race:?}|{right_race:?}");
+                if !pair.contains(filter.trim()) {
+                    continue;
+                }
+            }
             for game in 0..args.games {
                 let seed = args
                     .seed_base
@@ -559,10 +566,18 @@ impl SideBot {
                             .max_by(|a, b| {
                                 let score = |o: &BuildingOption| -> f32 {
                                     let config = sim.balance.unit(o.2.unwrap());
-                                    let mut value = attack_multiplier(
+                                    // Gold-efficiency: effective DPS vs the
+                                    // dominant armor, per building gold spent,
+                                    // factoring supply interval. Multiplier-
+                                    // only scoring ignored cost and tempo and
+                                    // made the bot overpay for slow counters.
+                                    let mult = attack_multiplier(
                                         config.attack_type,
                                         ARMOR_ORDER[dominant],
-                                    ) * 10.0;
+                                    );
+                                    let eff_dps = (config.damage.max(0) as f32 * mult)
+                                        / config.attack_interval.max(0.1);
+                                    let mut value = eff_dps / o.1.max(1) as f32 * 100.0;
                                     if swarmy
                                         && matches!(
                                             config.ability,

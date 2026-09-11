@@ -3495,7 +3495,17 @@ mod tests {
         sim.tick(1.0 / 30.0);
 
         let slowed = sim.units.iter().find(|unit| unit.id == 821).unwrap();
-        assert!((slowed.slow_factor - 0.6).abs() < 1e-6);
+        let expected_factor = sim
+            .balance
+            .unit(UnitKind::GroveMireShaman)
+            .ability
+            .as_ref()
+            .map(|ability| match ability {
+                AbilityConfig::Slow { factor, .. } => *factor,
+                _ => 0.6,
+            })
+            .unwrap_or(0.6);
+        assert!((slowed.slow_factor - expected_factor).abs() < 1e-6);
         assert!(slowed.slow_timer > 0.0);
     }
 
