@@ -536,23 +536,18 @@ pub(crate) fn despawn_highlight(commands: &mut Commands, registry: &mut SceneReg
 
 /// Fog tile colors mutate in place on snapshot/fog changes; tiles themselves
 /// are spawned once per match in `sync_static_scene`.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_fog_tiles(
     state: Res<SnapshotState>,
     fog: Res<FogMemory>,
     net: Res<ClientNet>,
     registry: Res<SceneRegistry>,
     mut sprites: Query<(&FogTile, &mut Sprite)>,
-    mut tiles3d: Query<(
-        &FogTile,
-        &mut MeshMaterial3d<StandardMaterial>,
-        &mut Visibility,
-    )>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut world_assets: ResMut<World3dAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    time: Res<Time>,
+    mut next_rebuild: Local<f32>,
 ) {
     if is_3d() {
-        update_fog_tiles_3d(state, fog, net, registry, materials, world_assets, tiles3d);
+        update_fog_mesh_3d(meshes, registry, fog, state, net, time, next_rebuild);
         return;
     }
     if registry.fog_tiles.is_empty() {

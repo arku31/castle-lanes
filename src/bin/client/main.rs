@@ -548,6 +548,8 @@ struct UnitVisual {
 struct SceneRegistry {
     units: HashMap<u64, UnitVisual>,
     fog_tiles: Vec<Entity>,
+    fog_entity: Option<Entity>,
+    fog_mesh_handle: Option<Handle<Mesh>>,
     highlight: Option<Entity>,
     highlight_source: Option<HighlightSource>,
     statics_key: u64,

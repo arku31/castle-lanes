@@ -9,7 +9,7 @@ Castle Lanes is a native desktop Rust/Bevy game inspired by the builder-autobatt
 - WC3-style placement: grid appears only while building, ghost preview with valid/invalid tint, animated build circle, scaffold state on fresh buildings.
 - Same deterministic sim and protocol as v0.1 — replays, matchmaking, and team play unchanged.
 
-![Vanguard army and buildings on the 3D battlefield](docs/screenshots/m0_battle_3d.png)
+![Vanguard army and buildings on the 3D battlefield](docs/screenshots/battle_3d_castle.png)
 
 More views — the HUD, lobby, and overlays all fit a 1600×900 window without scrolling:
 

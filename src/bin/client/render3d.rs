@@ -1068,44 +1068,149 @@ pub(crate) fn sync_static_3d(
         }
     }
 
-    // Fog tiles live outside the statics key: spawned once per match,
-    // mutated in place by `update_fog_tiles_3d`.
+    // Fog is ONE continuous conforming mesh (plan §3.3): no per-tile lattice.
     let want_fog = state.snapshot.is_some() && net.team.is_some();
-    if want_fog && registry.fog_tiles.is_empty() {
-        let mut res = Res3d {
-            meshes: &mut meshes,
-            materials: &mut materials,
-            assets: &mut world_assets,
-        };
-        let tile_w = MAP_W / FOG_COLUMNS as f32;
-        let tile_h = MAP_H / FOG_ROWS as f32;
-        let mesh = res.flat_quad(tile_w + 14.0, tile_h + 12.0);
-        for row in 0..FOG_ROWS {
-            for col in 0..FOG_COLUMNS {
-                let pos = fog_cell_center(col, row);
-                let tile = commands
-                    .spawn((
-                        Mesh3d(mesh.clone()),
-                        MeshMaterial3d(res.flat_mat(Color::srgba(0.0, 0.0, 0.0, 0.88))),
-                        Transform::from_translation(Vec3::new(
-                            pos.x,
-                            // Average the four corners so tiles hug slopes.
-                            (ground_height(pos.x - 45.0, pos.y - 25.0)
-                                + ground_height(pos.x + 45.0, pos.y - 25.0)
-                                + ground_height(pos.x - 45.0, pos.y + 25.0)
-                                + ground_height(pos.x + 45.0, pos.y + 25.0))
-                                * 0.25
-                                + 2.2,
-                            -pos.y,
-                        )),
-                        Visibility::Hidden,
-                        FogTile { col, row },
-                    ))
-                    .id();
-                registry.fog_tiles.push(tile);
+    if want_fog && registry.fog_entity.is_none() {
+        let snapshot = state.snapshot.as_ref().expect("snapshot for fog");
+        let mesh = build_fog_mesh(&fog, snapshot, net.team);
+        let handle = meshes.add(mesh);
+        registry.fog_mesh_handle = Some(handle.clone());
+        let material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            ..default()
+        });
+        let entity = commands
+            .spawn((
+                Mesh3d(handle),
+                MeshMaterial3d(material),
+                Transform::IDENTITY,
+                NotShadowCaster,
+                FogMesh,
+            ))
+            .id();
+        registry.fog_entity = Some(entity);
+    } else if !want_fog {
+        if let Some(entity) = registry.fog_entity.take() {
+            commands.entity(entity).despawn();
+            registry.fog_mesh_handle = None;
+        }
+    }
+}
+
+/// Marker for the continuous fog veil mesh.
+#[derive(Component)]
+pub(crate) struct FogMesh;
+
+/// One continuous fog veil: a conforming mesh over the fog grid with
+/// per-vertex alpha (visible = transparent, explored = dim, unknown = dark).
+/// Shared corner vertices make it seamless — no tile lattice.
+fn build_fog_mesh(fog: &FogMemory, state: &MatchSnapshot, team: Option<Team>) -> Mesh {
+    let cols = FOG_COLUMNS;
+    let rows = FOG_ROWS;
+    let tw = MAP_W / cols as f32;
+    let th = MAP_H / rows as f32;
+    let x0 = -MAP_W * 0.5;
+    let z0 = -MAP_H * 0.5;
+
+    // Grid points: (cols+1) x (rows+1) with smoothed heights.
+    let mut heights = vec![0.0_f32; (cols + 1) * (rows + 1)];
+    for gz in 0..=rows {
+        for gx in 0..=cols {
+            let x = x0 + gx as f32 * tw;
+            let z = z0 + gz as f32 * th;
+            let y2d = -z;
+            heights[gz * (cols + 1) + gx] = (ground_height(x - 30.0, y2d - 20.0)
+                + ground_height(x + 30.0, y2d - 20.0)
+                + ground_height(x - 30.0, y2d + 20.0)
+                + ground_height(x + 30.0, y2d + 20.0))
+                * 0.25
+                + 1.6;
+        }
+    }
+
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut push_corner = |positions: &mut Vec<[f32; 3]>,
+                           colors: &mut Vec<[f32; 4]>,
+                           gx: usize,
+                           gz: usize,
+                           alpha: f32| {
+        positions.push([
+            x0 + gx as f32 * tw,
+            heights[gz * (cols + 1) + gx],
+            z0 + gz as f32 * th,
+        ]);
+        colors.push([0.0, 0.0, 0.004, alpha]);
+    };
+    for gz in 0..rows {
+        for gx in 0..cols {
+            let pos = fog_cell_center(gx, gz);
+            let reveal = world_reveal_strength(state, team.unwrap_or(Team::Left), pos);
+            let explored = fog.explored[fog_index(gx, gz)];
+            let alpha = if reveal > 0.35 {
+                0.0
+            } else if reveal > 0.0 {
+                0.30 * (1.0 - reveal)
+            } else if explored {
+                0.30
+            } else {
+                0.88
+            };
+            if alpha <= 0.015 {
+                continue;
+            }
+            let c00 = (gx, gz);
+            let c10 = (gx + 1, gz);
+            let c11 = (gx + 1, gz + 1);
+            let c01 = (gx, gz + 1);
+            for corner in [c00, c10, c11, c00, c11, c01] {
+                push_corner(&mut positions, &mut colors, corner.0, corner.1, alpha);
             }
         }
     }
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+}
+
+/// Rebuild the fog mesh in place when the reveal state changes (throttled).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn update_fog_mesh_3d(
+    mut meshes: ResMut<Assets<Mesh>>,
+    registry: Res<SceneRegistry>,
+    fog: Res<FogMemory>,
+    state: Res<SnapshotState>,
+    net: Res<ClientNet>,
+    time: Res<Time>,
+    mut next_rebuild: Local<f32>,
+) {
+    if registry.fog_entity.is_none() {
+        return;
+    }
+    if !fog.is_changed() && !state.is_changed() {
+        return;
+    }
+    if time.elapsed_secs() < *next_rebuild {
+        return;
+    }
+    *next_rebuild = time.elapsed_secs() + 0.25;
+    let Some(handle) = registry.fog_mesh_handle.as_ref() else {
+        return;
+    };
+    let Some(mesh) = meshes.get_mut(handle) else {
+        return;
+    };
+    let Some(snapshot) = state.snapshot.as_ref() else {
+        return;
+    };
+    *mesh = build_fog_mesh(&fog, snapshot, net.team);
 }
 
 fn spawn_zone_tiles_3d(
@@ -1184,7 +1289,7 @@ fn spawn_building_3d(
         commands.spawn((
             SceneRoot(handle.clone()),
             Transform::from_translation(base + Vec3::Y * 4.0)
-                .with_scale(Vec3::splat(if scaffold { 0.62 } else { 1.0 })),
+                .with_scale(Vec3::splat(if scaffold { 0.78 } else { 1.25 })),
             StaticScene,
         ));
     } else {
@@ -1739,56 +1844,6 @@ pub(crate) fn update_object_highlight_3d(
 }
 
 // ---- Fog tiles ----
-
-pub(crate) fn update_fog_tiles_3d(
-    state: Res<SnapshotState>,
-    fog: Res<FogMemory>,
-    net: Res<ClientNet>,
-    registry: Res<SceneRegistry>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut world_assets: ResMut<World3dAssets>,
-    mut tiles: Query<(
-        &FogTile,
-        &mut MeshMaterial3d<StandardMaterial>,
-        &mut Visibility,
-    )>,
-) {
-    if registry.fog_tiles.is_empty() {
-        return;
-    }
-    let (Some(snapshot), Some(team)) = (&state.snapshot, net.team) else {
-        return;
-    };
-    if !state.is_changed() && !fog.is_changed() {
-        return;
-    }
-    for (tile, mut mat, mut visibility) in &mut tiles {
-        let pos = fog_cell_center(tile.col, tile.row);
-        let reveal = world_reveal_strength(snapshot, team, pos);
-        let explored = fog.explored[fog_index(tile.col, tile.row)];
-        let (alpha, hidden) = if reveal > 0.45 {
-            (0.0, true)
-        } else if reveal > 0.0 {
-            (0.20 * (1.0 - reveal), false)
-        } else if explored {
-            (0.30, false)
-        } else {
-            (0.88, false)
-        };
-        if hidden {
-            *visibility = Visibility::Hidden;
-            continue;
-        }
-        *visibility = Visibility::Inherited;
-        // Alpha is quantized so the shared-material cache stays small.
-        let alpha = (alpha * 10.0).round() / 10.0;
-        **mat = cached_flat_mat(
-            &mut materials,
-            &mut world_assets,
-            Color::srgba(0.004, 0.006, 0.009, alpha),
-        );
-    }
-}
 
 // ---- Placement preview ----
 
