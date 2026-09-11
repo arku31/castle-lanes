@@ -18,9 +18,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path stage/assets | Out-Null
+          New-Item -ItemType Directory -Force -Path stage/config | Out-Null
           Copy-Item target/release/castle_lanes_server.exe stage/
           Copy-Item target/release/castle_lanes_client.exe stage/
           Copy-Item -Recurse assets/* stage/assets/
+          Copy-Item config/balance.json stage/config/balance.json
           @'
           @echo off
           castle_lanes_server.exe 0.0.0.0:4000

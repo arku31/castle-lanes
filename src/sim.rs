@@ -746,7 +746,10 @@ impl BalanceConfig {
                     Self::default()
                 }
             },
-            Err(_) => Self::default(),
+            // No config file (e.g. a bare hosted server): fall back to the
+            // tuned balance embedded at compile time, not field defaults.
+            Err(_) => serde_json::from_str(include_str!("../config/balance.json"))
+                .expect("embedded config/balance.json must be valid"),
         }
     }
 

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Default match server for plain `castle_lanes_client` launches (the hosted
 /// test server). Override per launch with `--server host:port`.
-pub const DEFAULT_SERVER_ADDR: &str = "192.168.178.71:4000";
+pub const DEFAULT_SERVER_ADDR: &str = "127.0.0.1:4000";
 pub const PROTOCOL_VERSION: u16 = 9;
 pub type GameId = u32;
 
