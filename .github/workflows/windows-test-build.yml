@@ -1,0 +1,43 @@
+name: Windows test build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build server + client (release)
+        run: cargo build --release --bin castle_lanes_server --bin castle_lanes_client
+      - name: Stage package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage/assets | Out-Null
+          Copy-Item target/release/castle_lanes_server.exe stage/
+          Copy-Item target/release/castle_lanes_client.exe stage/
+          Copy-Item -Recurse assets/* stage/assets/
+          @'
+          @echo off
+          castle_lanes_server.exe 0.0.0.0:4000
+          pause
+          '@ | Out-File -Encoding ascii stage/run_server.bat
+          @'
+          @echo off
+          castle_lanes_client.exe --name Player1
+          pause
+          '@ | Out-File -Encoding ascii stage/run_client_player1.bat
+          @'
+          @echo off
+          castle_lanes_client.exe --name Player2
+          pause
+          '@ | Out-File -Encoding ascii stage/run_client_player2.bat
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: castle-lanes-windows-test
+          path: stage/
