@@ -42,7 +42,7 @@ pub(crate) fn redraw_game_ui(
     }
 
     if state.snapshot.is_none() {
-        spawn_bottom_console(&mut commands, &layout);
+        spawn_bottom_console(&mut commands, &layout, &net);
         spawn_lobby_browser(&mut commands, &state, &net);
         // Overlays stay reachable before joining anything (H / O work here too).
         if overlays.help {
@@ -54,7 +54,7 @@ pub(crate) fn redraw_game_ui(
         return;
     }
 
-    spawn_bottom_console(&mut commands, &layout);
+    spawn_bottom_console(&mut commands, &layout, &net);
 
     if let Some(snapshot) = &state.snapshot {
         spawn_minimap(
@@ -775,7 +775,27 @@ pub(crate) fn lobby_game_row_size() -> Vec2 {
     Vec2::new(460.0, 32.0)
 }
 
-pub(crate) fn spawn_bottom_console(commands: &mut Commands, layout: &UiLayout) {
+pub(crate) fn spawn_bottom_console(commands: &mut Commands, layout: &UiLayout, net: &ClientNet) {
+    // Connection errors get a loud red banner - silent failures read as
+    // "buttons do nothing" (plan-0.2 remote-testing feedback).
+    if let Some((message, since)) = &net.last_error {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f32())
+            .unwrap_or(0.0);
+        let blink = (t * 2.0).sin() * 0.15 + 0.85;
+        spawn_ui_label(
+            commands,
+            &format!("!! {message}"),
+            Vec2::new(0.0, layout.panel_y() + 168.0),
+            15.0,
+            Color::srgba(1.0, 0.32, 0.24, blink),
+            52.0,
+            Anchor::CENTER,
+            Justify::Center,
+        );
+        let _ = since;
+    }
     let bar_half = layout.bar_half_width();
     spawn_ui_panel(
         commands,
@@ -1665,7 +1685,9 @@ pub(crate) fn ui_summary(state: &SnapshotState, net: &ClientNet) -> (String, Str
         "Not joined".to_string()
     };
 
-    let message = if snapshot.message.is_empty() {
+    let message = if net.last_error.is_some() && net.player_id.is_none() {
+        format!("[CONNECTION PROBLEM] {}", net.status)
+    } else if snapshot.message.is_empty() {
         net.status.clone()
     } else {
         format!("{}\n{}", net.status, snapshot.message)

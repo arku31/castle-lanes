@@ -13,7 +13,7 @@ use castle_lanes::sim::{
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -167,6 +167,9 @@ struct ClientNet {
     profile_wins: u32,
     profile_losses: u32,
     demo_build_count: u32,
+    /// Connection-failure diagnostics: shown as a red banner until cleared.
+    pub unreachable_since: Option<Instant>,
+    pub last_error: Option<(String, Instant)>,
 }
 
 /// An unacknowledged placement intent, retried until acked or expired
@@ -310,6 +313,8 @@ fn run_replay(path: std::path::PathBuf) {
         profile_wins: 0,
         profile_losses: 0,
         demo_build_count: 0,
+        unreachable_since: None,
+        last_error: None,
     };
     // replay client: same window/UI/render stack, driven by the local sim
     App::new()
@@ -455,6 +460,116 @@ fn auto_screenshots(
 impl DemoShots {
     fn interval_secs(&self) -> f32 {
         2.5
+    }
+}
+
+/// Remote-testing diagnostics (set CLIENT_DEBUG=1): every keyboard/mouse/
+/// focus event is logged to client_debug.log and mirrored on screen, so a
+/// "no input" report tells us whether events reach the app at all.
+#[derive(Resource)]
+struct InputDiag {
+    log: Option<std::fs::File>,
+    last_key: String,
+    last_mouse: String,
+    focused: bool,
+    cursor: String,
+    on_screen: Option<Entity>,
+}
+
+fn input_diagnostics(
+    mut commands: Commands,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut keys: MessageReader<bevy::input::keyboard::KeyboardInput>,
+    mut mouse: MessageReader<bevy::input::mouse::MouseButtonInput>,
+    mut focus: MessageReader<bevy::window::WindowFocused>,
+    mut moves: MessageReader<bevy::window::CursorMoved>,
+    mut diag: Option<ResMut<InputDiag>>,
+) {
+    let Some(diag) = diag.as_deref_mut() else {
+        return;
+    };
+    let mut dirty = false;
+    for ev in keys.read() {
+        if ev.state.is_pressed() {
+            diag.last_key = format!("{:?}", ev.key_code);
+            dirty = true;
+        }
+    }
+    for ev in mouse.read() {
+        if ev.state.is_pressed() {
+            diag.last_mouse = format!("{:?}", ev.button);
+            dirty = true;
+        }
+    }
+    for ev in focus.read() {
+        diag.focused = ev.focused;
+        dirty = true;
+        if let Some(f) = diag.log.as_mut() {
+            let _ = writeln!(f, "FOCUS {}", ev.focused);
+        }
+    }
+    if let Some(ev) = moves.read().last() {
+        let c = format!("{:.0},{:.0}", ev.position.x, ev.position.y);
+        if c != diag.cursor {
+            diag.cursor = c;
+            dirty = true;
+        }
+    }
+    if !dirty {
+        return;
+    }
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let status = format!(
+        "IN:{}  KEY:{}  MOUSE:{}  FOCUS:{}  CUR:{}",
+        if diag.focused { "WIN" } else { "NO" },
+        diag.last_key,
+        diag.last_mouse,
+        diag.focused,
+        diag.cursor
+    );
+    if let Some(entity) = diag.on_screen {
+        if let Ok(mut t) = commands.get_entity(entity) {
+            let _ = t.insert(Text2d::new(status.clone()));
+        }
+    } else {
+        let text = Text2d::new(status.clone());
+        let entity = commands
+            .spawn((
+                text,
+                TextFont::from_font_size(18.0),
+                TextColor(Color::srgb(1.0, 0.9, 0.3)),
+                Anchor::BOTTOM_LEFT,
+                Transform::from_xyz(
+                    -window.width() / 2.0 + 20.0,
+                    -window.height() / 2.0 + 160.0,
+                    0.0,
+                ),
+            ))
+            .id();
+        diag.on_screen = Some(entity);
+    }
+    if let Some(f) = diag.log.as_mut() {
+        let _ = writeln!(f, "{status}");
+    }
+}
+
+fn new_input_diag() -> InputDiag {
+    let log = std::env::var("CLIENT_DEBUG").ok().and_then(|_| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("client_debug.log")
+            .ok()
+    });
+    InputDiag {
+        log,
+        last_key: "-".to_string(),
+        last_mouse: "-".to_string(),
+        focused: false,
+        cursor: "-".to_string(),
+        on_screen: None,
     }
 }
 
@@ -897,9 +1012,7 @@ fn main() {
                         title: format!("Castle Lanes v{}", castle_lanes::VERSION),
                         resolution: WindowResolution::new(1600, 900),
                         resizable: true,
-                        // Dev/demo aid: the capture pipeline on this box
-                        // depends on the window actually being composited.
-                        window_level: bevy::window::WindowLevel::AlwaysOnTop,
+                        focused: true,
                         ..default()
                     }),
                     ..default()
@@ -955,6 +1068,8 @@ fn main() {
             profile_wins: 0,
             profile_losses: 0,
             demo_build_count: 0,
+            unreachable_since: None,
+            last_error: None,
         })
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
@@ -984,6 +1099,7 @@ fn main() {
         .init_resource::<World3dAssets>()
         .init_resource::<CameraRig>()
         .init_resource::<BuildFx>()
+        .insert_resource(new_input_diag())
         .insert_resource(DemoShots {
             enabled: options.demo_shots,
             counter: 0,
@@ -993,6 +1109,7 @@ fn main() {
             Update,
             report_fps.run_if(|demo: Res<DemoShots>| demo.enabled),
         )
+        .add_systems(Update, input_diagnostics)
         .add_systems(Startup, setup)
         .add_systems(Startup, setup_3d_world)
         .add_systems(

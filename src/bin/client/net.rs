@@ -22,6 +22,8 @@ pub(crate) fn receive_packets(
                 Ok(ServerPacket::Connected { name }) => {
                     net.connected = true;
                     net.player_name = name;
+                    net.unreachable_since = None;
+                    net.last_error = None;
                     net.status = "Connected. Create a game or join one from the list.".to_string();
                     send_client(&net, &ClientPacket::ListGames);
                 }
@@ -95,6 +97,7 @@ pub(crate) fn receive_packets(
                 }
                 Ok(ServerPacket::Error { message }) => {
                     net.pending_placement = None;
+                    net.last_error = Some((message.clone(), std::time::Instant::now()));
                     net.status = message;
                 }
                 Err(err) => {
@@ -112,6 +115,22 @@ pub(crate) fn receive_packets(
     note_snapshot_for_interp(&mut interp, &state);
 
     if !net.connected && net.last_join.elapsed() > Duration::from_secs(2) {
+        // No response to the join: surface it loudly instead of silently
+        // retrying (this is exactly what a wrong IP / closed UDP port /
+        // stopped server looks like from the player's seat).
+        let attempts = net
+            .unreachable_since
+            .map(|since| (std::time::Instant::now() - since).as_secs())
+            .unwrap_or(0);
+        let message = format!(
+            "Unable to connect to {} - no response. Is the server running, and is UDP port 4000 open on it and its firewall? Retrying...",
+            net.server_addr
+        );
+        if net.unreachable_since.is_none() {
+            net.unreachable_since = Some(std::time::Instant::now());
+        }
+        net.last_error = Some((message.clone(), std::time::Instant::now()));
+        net.status = format!("{message} (no reply for {attempts}s)");
         send_join(&mut net);
     } else if net.connected && net.last_keepalive.elapsed() > Duration::from_secs(2) {
         send_join(&mut net);
