@@ -30,11 +30,13 @@ jobs:
           '@ | Out-File -Encoding ascii stage/run_server.bat
           @'
           @echo off
+          set CLIENT_DEBUG=1
           castle_lanes_client.exe --name Player1
           pause
           '@ | Out-File -Encoding ascii stage/run_client_player1.bat
           @'
           @echo off
+          set CLIENT_DEBUG=1
           castle_lanes_client.exe --name Player2
           pause
           '@ | Out-File -Encoding ascii stage/run_client_player2.bat
