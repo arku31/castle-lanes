@@ -11,9 +11,10 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// `CL_DEFAULT_SERVER_ADDR` env var so it isn't hardcoded in the public
 /// sources; local builds fall back to localhost. Override per launch with
 /// `--server host:port`.
-pub const DEFAULT_SERVER_ADDR: &str = {
-    let injected = option_env!("CL_DEFAULT_SERVER_ADDR").unwrap_or("");
-    if injected.is_empty() { "127.0.0.1:4000" } else { injected }
+pub const DEFAULT_SERVER_ADDR: &str = match option_env!("CL_DEFAULT_SERVER_ADDR") {
+    // `str` equality isn't const-stable, hence the len() check.
+    Some(addr) => if addr.len() == 0 { "127.0.0.1:4000" } else { addr },
+    None => "127.0.0.1:4000",
 };
 pub const PROTOCOL_VERSION: u16 = 9;
 pub type GameId = u32;
