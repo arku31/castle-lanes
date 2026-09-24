@@ -33,6 +33,10 @@ More views — the HUD, lobby, and overlays all fit a 1600×900 window without s
 | --- | --- |
 | ![Help overlay with rules and controls](docs/screenshots/help.png) | ![Settings overlay with volume and resolution](docs/screenshots/settings.png) |
 
+## Download
+
+Ready-to-play builds for **Windows, macOS and Linux** (3D client + dedicated server, with launch scripts) are on the [Releases page](../../releases). The release clients come preconfigured to reach the hosted test server — just extract and run the launcher for your platform, then press `Enter` to join. To point a client somewhere else, pass `--server host:port`.
+
 ## Run
 
 With [Task](https://taskfile.dev/), common commands are available through `Taskfile.yml`:

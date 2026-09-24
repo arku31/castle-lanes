@@ -1,9 +1,10 @@
-name: Test builds
+name: Build and release
 
 on:
   workflow_dispatch:
   push:
     branches: [master]
+    tags: ['v*']
 
 jobs:
   build-windows:
@@ -45,7 +46,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: castle-lanes-windows-test
+          name: castle-lanes-windows
           path: stage/
 
   build-macos:
@@ -80,10 +81,77 @@ jobs:
           CLIENT_DEBUG=1 ./castle_lanes_client --name Player2
           EOF
           chmod +x stage/castle_lanes_* stage/*.command
-      - name: Zip package
-        run: cd stage && zip -rq ../castle-lanes-macos.zip . && cd ..
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: castle-lanes-macos-test
-          path: castle-lanes-macos.zip
+          name: castle-lanes-macos
+          path: stage/
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bevy system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build server + client (release)
+        env:
+          CL_DEFAULT_SERVER_ADDR: ${{ secrets.GAME_SERVER_ADDR }}
+        run: cargo build --release --bin castle_lanes_server --bin castle_lanes_client
+      - name: Stage package
+        run: |
+          mkdir -p stage/assets stage/config
+          cp target/release/castle_lanes_server target/release/castle_lanes_client stage/
+          cp -R assets/. stage/assets/
+          cp config/balance.json stage/config/balance.json
+          cat > stage/run_server.sh <<'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          ./castle_lanes_server 0.0.0.0:4000
+          EOF
+          cat > stage/run_client_player1.sh <<'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          CLIENT_DEBUG=1 ./castle_lanes_client --name Player1
+          EOF
+          cat > stage/run_client_player2.sh <<'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          CLIENT_DEBUG=1 ./castle_lanes_client --name Player2
+          EOF
+          chmod +x stage/castle_lanes_* stage/*.sh
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: castle-lanes-linux
+          path: stage/
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Name packages by version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir out
+          (cd dist/castle-lanes-windows && zip -qr ../../out/castle-lanes-$VERSION-windows.zip .)
+          (cd dist/castle-lanes-macos && zip -qr ../../out/castle-lanes-$VERSION-macos.zip .)
+          (cd dist/castle-lanes-linux && tar -czf ../../out/castle-lanes-$VERSION-linux.tar.gz .)
+          ls -la out/
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Castle Lanes $GITHUB_REF_NAME" \
+            --generate-notes --latest
