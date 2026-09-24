@@ -1,0 +1,42 @@
+name: Deploy server
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build server (release)
+        run: cargo build --locked --release --bin castle_lanes_server
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Ship binary and config
+        run: |
+          strip target/release/castle_lanes_server
+          scp target/release/castle_lanes_server gameuser@${{ secrets.VPS_HOST }}:/home/gameuser/app/castle_lanes_server.new
+          scp config/balance.json gameuser@${{ secrets.VPS_HOST }}:/home/gameuser/app/config/balance.json
+
+      - name: Swap binary and restart
+        run: |
+          ssh gameuser@${{ secrets.VPS_HOST }} 'install -m 755 -o gameuser -g gameuser /home/gameuser/app/castle_lanes_server.new /home/gameuser/app/castle_lanes_server && sudo systemctl restart castle-lanes.service && systemctl is-active castle-lanes.service'
