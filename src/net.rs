@@ -7,8 +7,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Default match server for plain `castle_lanes_client` launches (the hosted
-/// test server). Override per launch with `--server host:port`.
-pub const DEFAULT_SERVER_ADDR: &str = "127.0.0.1:4000";
+/// test server). CI builds inject the address at compile time via the
+/// `CL_DEFAULT_SERVER_ADDR` env var so it isn't hardcoded in the public
+/// sources; local builds fall back to localhost. Override per launch with
+/// `--server host:port`.
+pub const DEFAULT_SERVER_ADDR: &str = {
+    let injected = option_env!("CL_DEFAULT_SERVER_ADDR").unwrap_or("");
+    if injected.is_empty() { "127.0.0.1:4000" } else { injected }
+};
 pub const PROTOCOL_VERSION: u16 = 9;
 pub type GameId = u32;
 

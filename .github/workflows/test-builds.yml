@@ -1,0 +1,89 @@
+name: Test builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build server + client (release)
+        env:
+          CL_DEFAULT_SERVER_ADDR: ${{ secrets.GAME_SERVER_ADDR }}
+        run: cargo build --release --bin castle_lanes_server --bin castle_lanes_client
+      - name: Stage package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage/assets | Out-Null
+          New-Item -ItemType Directory -Force -Path stage/config | Out-Null
+          Copy-Item target/release/castle_lanes_server.exe stage/
+          Copy-Item target/release/castle_lanes_client.exe stage/
+          Copy-Item -Recurse assets/* stage/assets/
+          Copy-Item config/balance.json stage/config/balance.json
+          @'
+          @echo off
+          castle_lanes_server.exe 0.0.0.0:4000
+          pause
+          '@ | Out-File -Encoding ascii stage/run_server.bat
+          @'
+          @echo off
+          set CLIENT_DEBUG=1
+          castle_lanes_client.exe --name Player1
+          pause
+          '@ | Out-File -Encoding ascii stage/run_client_player1.bat
+          @'
+          @echo off
+          set CLIENT_DEBUG=1
+          castle_lanes_client.exe --name Player2
+          pause
+          '@ | Out-File -Encoding ascii stage/run_client_player2.bat
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: castle-lanes-windows-test
+          path: stage/
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build server + client (release)
+        env:
+          CL_DEFAULT_SERVER_ADDR: ${{ secrets.GAME_SERVER_ADDR }}
+        run: cargo build --release --bin castle_lanes_server --bin castle_lanes_client
+      - name: Stage package
+        run: |
+          mkdir -p stage/assets stage/config
+          cp target/release/castle_lanes_server target/release/castle_lanes_client stage/
+          cp -R assets/. stage/assets/
+          cp config/balance.json stage/config/balance.json
+          cat > stage/run_server.command <<'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          ./castle_lanes_server 0.0.0.0:4000
+          EOF
+          cat > stage/run_client_player1.command <<'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          CLIENT_DEBUG=1 ./castle_lanes_client --name Player1
+          EOF
+          cat > stage/run_client_player2.command <<'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          CLIENT_DEBUG=1 ./castle_lanes_client --name Player2
+          EOF
+          chmod +x stage/castle_lanes_* stage/*.command
+      - name: Zip package
+        run: cd stage && zip -rq ../castle-lanes-macos.zip . && cd ..
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: castle-lanes-macos-test
+          path: castle-lanes-macos.zip
