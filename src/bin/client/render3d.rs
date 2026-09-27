@@ -200,22 +200,43 @@ fn build_model_assets(assets: AssetServer) -> ModelAssets {
             assets.load(format!("models/doodads/{name}.glb#Scene0")),
         );
     }
-    for name in VANGUARD_BUILDING_MODELS {
-        models.buildings.insert(
-            name.to_string(),
-            assets.load(format!("models/vanguard/{name}.glb#Scene0")),
+    for (faction, buildings, units, castle) in [
+        (
+            "vanguard",
+            VANGUARD_BUILDING_MODELS.as_slice(),
+            VANGUARD_UNIT_MODELS.as_slice(),
+            "vanguard_castle",
+        ),
+        (
+            "grove",
+            GROVE_BUILDING_MODELS.as_slice(),
+            GROVE_UNIT_MODELS.as_slice(),
+            "grove_castle",
+        ),
+        (
+            "ember",
+            EMBER_BUILDING_MODELS.as_slice(),
+            EMBER_UNIT_MODELS.as_slice(),
+            "ember_castle",
+        ),
+    ] {
+        for name in buildings {
+            models.buildings.insert(
+                name.to_string(),
+                assets.load(format!("models/{faction}/{name}.glb#Scene0")),
+            );
+        }
+        for name in units {
+            models.units.insert(
+                name.to_string(),
+                assets.load(format!("models/{faction}/{name}.glb#Scene0")),
+            );
+        }
+        models.castles.insert(
+            castle.to_string(),
+            assets.load(format!("models/{faction}/{castle}.glb#Scene0")),
         );
     }
-    for name in VANGUARD_UNIT_MODELS {
-        models.units.insert(
-            name.to_string(),
-            assets.load(format!("models/vanguard/{name}.glb#Scene0")),
-        );
-    }
-    models.castles.insert(
-        "vanguard_castle".to_string(),
-        assets.load("models/vanguard/vanguard_castle.glb#Scene0"),
-    );
     models
 }
 
