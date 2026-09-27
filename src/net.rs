@@ -13,7 +13,13 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// `--server host:port`.
 pub const DEFAULT_SERVER_ADDR: &str = match option_env!("CL_DEFAULT_SERVER_ADDR") {
     // `str` equality isn't const-stable, hence the len() check.
-    Some(addr) => if addr.len() == 0 { "127.0.0.1:4000" } else { addr },
+    Some(addr) => {
+        if addr.len() == 0 {
+            "127.0.0.1:4000"
+        } else {
+            addr
+        }
+    }
     None => "127.0.0.1:4000",
 };
 pub const PROTOCOL_VERSION: u16 = 9;

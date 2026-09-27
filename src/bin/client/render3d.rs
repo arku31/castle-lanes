@@ -41,12 +41,13 @@ pub(crate) fn is_3d() -> bool {
     RENDER_3D.load(Ordering::Relaxed)
 }
 
-/// Camera pitch (plan-0.2.md §6) and the base distance that reproduces the
-/// v0.1 ortho scale 1.0 vertical coverage at fov 40°.
+/// WC3-style long-lens camera (goal-0.3 C1): narrow 22° FOV kills the
+/// converging-vertical "tech demo" look; base distance follows the tan ratio
+/// so the visible ground band stays as before; pitch 54° reads like WC3.
 const CAM_PITCH_DEG: f32 = 48.0;
 const CAM_BASE_DIST: f32 = 620.0;
-const CAM_ZOOM_MIN: f32 = 0.35;
-const CAM_ZOOM_MAX: f32 = 2.4;
+const CAM_ZOOM_MIN: f32 = 0.4;
+const CAM_ZOOM_MAX: f32 = 1.9;
 const CAM_FOV_DEG: f32 = 40.0;
 
 /// Terrain footprint and height profile (plan-0.2.md §4): castle highlands
@@ -587,7 +588,7 @@ impl CameraRig {
 
     pub(crate) fn home_target(team: Team) -> Vec2 {
         let castle_x = lane_to_world(team.castle_pos());
-        Vec2::new(castle_x + team.direction() * 320.0, 60.0)
+        Vec2::new(castle_x + team.direction() * 240.0, 60.0)
     }
 }
 
@@ -672,10 +673,13 @@ pub(crate) fn setup_3d_world(
 /// Deferred: waits for the doodad GLBs to finish loading, then places them.
 pub(crate) fn spawn_doodads_when_loaded(
     mut commands: Commands,
-    models: Res<ModelAssets>,
+    models: Option<Res<ModelAssets>>,
     scenes: Res<Assets<Scene>>,
     mut done: Local<bool>,
 ) {
+    let Some(models) = models.as_deref() else {
+        return; // 2D renderer: no 3D model registry exists
+    };
     if *done || !models.doodads.values().all(|h| scenes.contains(h)) {
         return;
     }
@@ -1430,7 +1434,6 @@ pub(crate) fn spawn_unit_visual_3d(
         .as_ref()
         .and_then(|name| models.units.get(name))
         .filter(|h| scenes.contains(*h));
-    let is_model = model_handle.is_some();
     let root = commands
         .spawn(Transform::from_translation(
             world2_to_3d(world) + Vec3::Y * 0.45,
@@ -1453,17 +1456,37 @@ pub(crate) fn spawn_unit_visual_3d(
             NotShadowCaster,
         ))
         .id();
-    let sprite = commands
-        .spawn((
-            Mesh3d(res.stand_quad(s.x * 0.92, s.y * 0.92)),
-            MeshMaterial3d(
-                res.tex_mat(&unit_sprite_handle(unit_assets, unit.kind), team_tint(side)),
-            ),
-            Transform::from_xyz(0.0, s.y * 0.5 + 2.0, 0.0),
-            NotShadowCaster,
-        ))
-        .id();
-    let bar_y = s.y + 8.0;
+    // Sprite slot: glTF model (goal-0.3 C2/C3) when available, flat billboard
+    // quad otherwise. Models are authored Y-up facing +X at ~46 units tall.
+    let (sprite, sprite_h, is_model_final) = if let Some(handle) = model_handle {
+        let e = commands
+            .spawn((
+                SceneRoot(handle.clone()),
+                Transform::from_xyz(0.0, 2.0, 0.0)
+                    .with_scale(Vec3::splat(1.8))
+                    .with_rotation(Quat::from_rotation_y(if side == Team::Left {
+                        0.0
+                    } else {
+                        std::f32::consts::PI
+                    })),
+            ))
+            .id();
+        (e, s.y * 1.8, true)
+    } else {
+        let e = commands
+            .spawn((
+                Mesh3d(res.stand_quad(s.x * 0.92, s.y * 0.92)),
+                MeshMaterial3d(
+                    res.tex_mat(&unit_sprite_handle(unit_assets, unit.kind), team_tint(side)),
+                ),
+                Transform::from_xyz(0.0, s.y * 0.5 + 2.0, 0.0),
+                NotShadowCaster,
+            ))
+            .id();
+        (e, s.y, false)
+    };
+    let sprite_h = sprite_h.max(46.0 * 1.8);
+    let bar_y = sprite_h + 10.0;
     let badge_attack = commands
         .spawn((
             Mesh3d(res.flat_quad(9.0, 4.0)),
@@ -1514,12 +1537,12 @@ pub(crate) fn spawn_unit_visual_3d(
         badge_armor,
         health_fill,
         health: unit.health,
-        sprite_base_y: s.y * 0.5 + 2.0,
+        sprite_base_y: 2.0,
         badge_base_y: bar_y + 2.5,
         kind: unit.kind,
         side,
         last_pos: world,
-        is_model,
+        is_model: is_model_final,
     }
 }
 
@@ -1691,6 +1714,15 @@ pub(crate) fn animate_units_3d(
         let world = sim_pos_to_world(sim_pos);
         let pos3 = world2_to_3d(world) + Vec3::Y * 0.45;
         root.translation = pos3;
+        if std::env::var("CLIENT_DEBUG").is_ok()
+            && (unit.id % 5) == (time.elapsed_secs() * 2.0) as u64 % 5
+            && time.elapsed_secs() % 2.0 < 0.05
+        {
+            println!(
+                "UNITDBG {:?} world=({:.0},{:.0}) screen_pos=({:.0},{:.0}) vel=({:.1},{:.1})",
+                unit.kind, world.x, world.y, pos3.x, pos3.z, unit.velocity.x, unit.velocity.y
+            );
+        }
         if visual.is_model {
             root.rotation = Quat::IDENTITY;
             if let Ok(mut sprite) = transforms.get_mut(visual.sprite) {

@@ -167,6 +167,9 @@ struct ClientNet {
     profile_wins: u32,
     profile_losses: u32,
     demo_build_count: u32,
+    sent_rematch: bool,
+    stuck_in_lobby: Option<Instant>,
+    last_rematch_vote: Option<Instant>,
     /// Connection-failure diagnostics: shown as a red banner until cleared.
     pub unreachable_since: Option<Instant>,
     pub last_error: Option<(String, Instant)>,
@@ -313,6 +316,9 @@ fn run_replay(path: std::path::PathBuf) {
         profile_wins: 0,
         profile_losses: 0,
         demo_build_count: 0,
+        sent_rematch: false,
+        last_rematch_vote: None,
+        stuck_in_lobby: None,
         unreachable_since: None,
         last_error: None,
     };
@@ -1068,6 +1074,9 @@ fn main() {
             profile_wins: 0,
             profile_losses: 0,
             demo_build_count: 0,
+            sent_rematch: false,
+            last_rematch_vote: None,
+            stuck_in_lobby: None,
             unreachable_since: None,
             last_error: None,
         })
