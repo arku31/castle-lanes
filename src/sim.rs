@@ -21,7 +21,7 @@ const BOUNTY_EVENT_TTL: f32 = 0.75;
 const CASTLE_JUNCTION_RANGE: f32 = 18.0;
 const LANE_CENTER_Y: f32 = 8.0;
 const GRID_CELL_Y: f32 = 2.4;
-const LANE_SPREAD_LIMIT: f32 = 6.0;
+const LANE_SPREAD_LIMIT: f32 = 11.0;
 const UNIT_SEPARATION_PADDING: f32 = 0.08;
 const SPAWN_SEARCH_RINGS: i32 = 8;
 const BUILDING_FOOTPRINT_RADIUS: f32 = 4.6;
@@ -29,9 +29,9 @@ const CASTLE_FOOTPRINT_RADIUS: f32 = 5.0;
 pub const SELL_REFUND_RATIO: f32 = 0.7;
 // Vision radii in sim units; the authoritative server filters snapshots with
 // these so clients only receive entities their side can actually see.
-pub const VISION_CASTLE_RADIUS: f32 = 18.0;
-pub const VISION_BUILDING_RADIUS: f32 = 7.0;
-pub const VISION_UNIT_RADIUS: f32 = 8.0;
+pub const VISION_CASTLE_RADIUS: f32 = 26.0;
+pub const VISION_BUILDING_RADIUS: f32 = 13.0;
+pub const VISION_UNIT_RADIUS: f32 = 15.0;
 pub const DEFAULT_SIM_SEED: u64 = 0xC057_1A4E_5EED;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

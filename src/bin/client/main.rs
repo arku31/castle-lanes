@@ -113,11 +113,11 @@ fn update_ui_layout(windows: Query<&Window, With<PrimaryWindow>>, mut layout: Re
     }
 }
 
-const REVEAL_CASTLE_RADIUS: f32 = 430.0;
+const REVEAL_CASTLE_RADIUS: f32 = 620.0;
 
-const REVEAL_BUILDING_RADIUS: f32 = 150.0;
+const REVEAL_BUILDING_RADIUS: f32 = 300.0;
 
-const REVEAL_UNIT_RADIUS: f32 = 185.0;
+const REVEAL_UNIT_RADIUS: f32 = 340.0;
 
 const FOG_COLUMNS: usize = 72;
 

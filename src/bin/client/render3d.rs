@@ -1146,44 +1146,62 @@ fn build_fog_mesh(fog: &FogMemory, state: &MatchSnapshot, team: Option<Team>) ->
         }
     }
 
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
-    let mut push_corner = |positions: &mut Vec<[f32; 3]>,
-                           colors: &mut Vec<[f32; 4]>,
-                           gx: usize,
-                           gz: usize,
-                           alpha: f32| {
-        positions.push([
-            x0 + gx as f32 * tw,
-            heights[gz * (cols + 1) + gx],
-            z0 + gz as f32 * th,
-        ]);
-        colors.push([0.0, 0.0, 0.004, alpha]);
-    };
-    for gz in 0..rows {
-        for gx in 0..cols {
-            let pos = fog_cell_center(gx, gz);
-            let reveal = world_reveal_strength(state, team.unwrap_or(Team::Left), pos);
-            let explored = fog.explored[fog_index(gx, gz)];
-            let alpha = if reveal > 0.35 {
-                0.0
-            } else if reveal > 0.0 {
-                0.30 * (1.0 - reveal)
-            } else if explored {
-                0.30
+    // Per-CORNER reveal smoothed over neighbouring cells: vertex colors
+    // interpolate across each tile, so the veil feathers instead of stepping.
+    let mut corner_alpha = vec![0.0_f32; (cols + 1) * (rows + 1)];
+    for gz in 0..=rows {
+        for gx in 0..=cols {
+            let cx = gx.min(cols - 1);
+            let cz = gz.min(rows - 1);
+            let viewer = team.unwrap_or(Team::Left);
+            let reveal = (world_reveal_strength(state, viewer, fog_cell_center(cx, cz))
+                + world_reveal_strength(state, viewer, fog_cell_center(cx + 1, cz))
+                + world_reveal_strength(state, viewer, fog_cell_center(cx, cz + 1))
+                + world_reveal_strength(state, viewer, fog_cell_center(cx + 1, cz + 1)))
+                * 0.25;
+            let explored = [
+                fog.explored[fog_index(cx, cz)],
+                fog.explored[fog_index(cx + 1, cz)],
+                fog.explored[fog_index(cx, cz + 1)],
+                fog.explored[fog_index(cx + 1, cz + 1)],
+            ];
+            let explored_any = explored.iter().any(|e| *e);
+            let explored_n = explored.iter().filter(|e| **e).count() as f32;
+            let base = if explored_any {
+                0.30 + (0.88 - 0.30) * (1.0 - explored_n / 4.0)
             } else {
                 0.88
             };
-            if alpha <= 0.015 {
+            corner_alpha[gz * (cols + 1) + gx] = base * (1.0 - smoothstep(0.05, 0.5, reveal));
+        }
+    }
+
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut push_corner =
+        |positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>, gx: usize, gz: usize| {
+            positions.push([
+                x0 + gx as f32 * tw,
+                heights[gz * (cols + 1) + gx],
+                z0 + gz as f32 * th,
+            ]);
+            colors.push([0.0, 0.0, 0.004, corner_alpha[gz * (cols + 1) + gx]]);
+        };
+    for gz in 0..rows {
+        for gx in 0..cols {
+            let a = corner_alpha[gz * (cols + 1) + gx];
+            let b = corner_alpha[(gz + 1) * (cols + 1) + gx];
+            let c = corner_alpha[(gz + 1) * (cols + 1) + gx + 1];
+            let d = corner_alpha[gz * (cols + 1) + gx + 1];
+            if a + b + c + d <= 0.02 {
                 continue;
             }
-            let c00 = (gx, gz);
-            let c10 = (gx + 1, gz);
-            let c11 = (gx + 1, gz + 1);
-            let c01 = (gx, gz + 1);
-            for corner in [c00, c10, c11, c00, c11, c01] {
-                push_corner(&mut positions, &mut colors, corner.0, corner.1, alpha);
-            }
+            push_corner(&mut positions, &mut colors, gx, gz);
+            push_corner(&mut positions, &mut colors, gx + 1, gz);
+            push_corner(&mut positions, &mut colors, gx + 1, gz + 1);
+            push_corner(&mut positions, &mut colors, gx, gz);
+            push_corner(&mut positions, &mut colors, gx + 1, gz + 1);
+            push_corner(&mut positions, &mut colors, gx, gz + 1);
         }
     }
 
@@ -1805,7 +1823,7 @@ pub(crate) fn animate_units_3d(
             root.translation = pos3 + Vec3::Y * bob + Vec3::X * (strike_lunge * visual.facing_sign);
             root.rotation = Quat::from_rotation_y(visual.facing)
                 * Quat::from_rotation_z(-lean * visual.facing_sign);
-            root.scale = Vec3::splat(2.2 * pop * (1.0 + flash * 0.3));
+            root.scale = Vec3::splat(2.6 * pop * (1.0 + flash * 0.3));
         } else {
             let to_cam = cam_pos - pos3;
             root.rotation = Quat::from_rotation_y(to_cam.x.atan2(to_cam.z));
