@@ -44,11 +44,11 @@ pub(crate) fn is_3d() -> bool {
 /// WC3-style long-lens camera (goal-0.3 C1): narrow 22° FOV kills the
 /// converging-vertical "tech demo" look; base distance follows the tan ratio
 /// so the visible ground band stays as before; pitch 54° reads like WC3.
-const CAM_PITCH_DEG: f32 = 48.0;
-const CAM_BASE_DIST: f32 = 620.0;
+const CAM_PITCH_DEG: f32 = 54.0;
+const CAM_BASE_DIST: f32 = 1160.0;
 const CAM_ZOOM_MIN: f32 = 0.4;
 const CAM_ZOOM_MAX: f32 = 1.9;
-const CAM_FOV_DEG: f32 = 40.0;
+const CAM_FOV_DEG: f32 = 22.0;
 
 /// Terrain footprint and height profile (plan-0.2.md §4): castle highlands
 /// rise toward the map ends, lanes run as gentle fields, the middle is a
@@ -66,9 +66,12 @@ const LANE_ZS_2D: [f32; 4] = [192.0, 64.0, -64.0, -192.0];
 /// Deterministic terrain height for a point in 2D world coordinates.
 pub(crate) fn ground_height(x2d: f32, y2d: f32) -> f32 {
     let ax = x2d.abs();
-    let rise = smoothstep(560.0, 1520.0, ax);
-    let mut h = 64.0 * rise
-        + 26.0 * smoothstep(1250.0, 1750.0, ax)
+    // Gentle highland ramp: the castle terraces sit ~36 units above the
+    // field with a long transition, so the whole base area — including the
+    // back build zone — stays visible from the south-side camera instead of
+    // hiding behind a cliff crest.
+    let rise = smoothstep(620.0, 1620.0, ax);
+    let mut h = 36.0 * rise
         + CHANNEL_DEPTH * smoothstep(150.0, 40.0, ax)
         + value_noise(x2d, y2d) * 3.4 * (1.0 - rise);
     // Stone bridge decks flatten the channel crossing on every lane.
@@ -92,7 +95,7 @@ fn f32_lerp(a: f32, b: f32, t: f32) -> f32 {
 }
 
 fn rise_at(x2d: f32) -> f32 {
-    smoothstep(560.0, 1520.0, x2d.abs())
+    smoothstep(620.0, 1620.0, x2d.abs())
 }
 
 fn value_noise(x: f32, y: f32) -> f32 {
@@ -583,13 +586,6 @@ pub(crate) struct VfxBillboard;
 /// Corpses: fall over and sink instead of popping out (goal-0.3 C3 death).
 #[derive(Component)]
 pub(crate) struct CorpseFall;
-
-/// Screen shake resource (goal-0.3 C4): decays exponentially; triggered on
-/// castle hits.
-#[derive(Resource, Default)]
-pub(crate) struct ScreenShake {
-    pub magnitude: f32,
-}
 
 #[derive(Resource)]
 pub(crate) struct CameraRig {
@@ -2145,8 +2141,6 @@ pub(crate) fn apply_camera_rig(
     camera_home: Res<CameraHome>,
     mut rig: ResMut<CameraRig>,
     mut cam: Query<&mut Transform, With<Camera3d>>,
-    mut shake: ResMut<ScreenShake>,
-    time: Res<Time>,
 ) {
     if let Some(team) = net.team {
         if rig.initialized_for != Some(team) {
@@ -2168,21 +2162,11 @@ pub(crate) fn apply_camera_rig(
     // Right player's own base therefore sits on the screen right and their
     // units march right-to-left toward the enemy, mirrored for nobody.
     let side = 1.0;
-    let mut translation = Vec3::new(
+    let translation = Vec3::new(
         target3.x,
         target3.y + dist * pitch.sin(),
         target3.z + side * dist * pitch.cos(),
     );
-    // C4 screen shake: decaying jitter around the rig position.
-    if shake.magnitude > 0.01 {
-        let t = time.elapsed_secs();
-        translation += Vec3::new(
-            (t * 37.0).sin() * shake.magnitude,
-            (t * 41.0).sin() * shake.magnitude * 0.6,
-            (t * 33.0).cos() * shake.magnitude * 0.5,
-        );
-        shake.magnitude *= (0.02f32).powf(time.delta_secs());
-    }
     transform.translation = translation;
     transform.look_at(target3, Vec3::Y);
 }

@@ -19,7 +19,6 @@ pub(crate) fn detect_combat_vfx(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
-    mut shake: ResMut<ScreenShake>,
 ) {
     let mut res = Res3d {
         meshes: &mut meshes,
@@ -177,7 +176,6 @@ pub(crate) fn detect_combat_vfx(
                     true,
                 );
                 sfx.push(Sfx::CastleAlarm);
-                shake.magnitude = 14.0;
             }
         }
 

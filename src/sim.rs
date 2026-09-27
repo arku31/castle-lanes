@@ -510,7 +510,13 @@ pub fn building_spawn_position(
     cell: GridCell,
 ) -> WorldPos {
     let building = building_position(team, lane, zone, cell);
-    WorldPos::new(building.x + team.direction() * 2.0, building.y)
+    // Spawn toward the field: back-zone units emerge on the castle side of
+    // their building instead of behind it, so they never clip through it.
+    let toward_castle = match zone {
+        BuildZone::Back => -team.direction(),
+        BuildZone::Front => team.direction(),
+    };
+    WorldPos::new(building.x + toward_castle, building.y)
 }
 
 /// True when `pos` (sim space) lies inside the viewer side's current vision:

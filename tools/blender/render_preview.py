@@ -58,7 +58,7 @@ def main():
     cam_o = bpy.data.objects.new("Cam", cam)
     bpy.context.scene.collection.objects.link(cam_o)
     import math as _m
-    direction = mathutils.Vector((-1.0, 1.5, 0.8)).normalized()
+    direction = mathutils.Vector((1.0, 1.6, 0.75)).normalized()
     distance = radius / _m.tan(cam.angle_y * 0.5) * 1.15 + radius
     cam_o.location = center + direction * distance
     look = center - cam_o.location
