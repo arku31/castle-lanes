@@ -2132,10 +2132,13 @@ pub(crate) fn camera_rig_input(
     }
     if forward != 0.0 || strafe != 0.0 {
         // Screen-up pans across the lanes (map "north"), screen-right pans
-        // toward the enemy. Both follow the viewer's mirrored frame.
+        // toward the enemy. Both follow the viewer's mirrored frame: for the
+        // Left viewer (camera south, looking north) screen-up is +y, for the
+        // Right viewer (camera north, looking south) it is -y — exactly the
+        // look_sign factor.
         let speed = 620.0 * rig.zoom * time.delta_secs();
         rig.target.x += strafe * rig.look_sign * speed;
-        rig.target.y -= forward * rig.look_sign * speed;
+        rig.target.y += forward * rig.look_sign * speed;
         rig.target.x = rig.target.x.clamp(-1520.0, 1520.0);
         rig.target.y = rig.target.y.clamp(-330.0, 330.0);
     }
