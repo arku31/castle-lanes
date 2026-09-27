@@ -1,5 +1,12 @@
 # Goal: WC3 feel + solid game feel — Castle Lanes v0.3 (presentation only)
 
+> **Status: DONE — shipped in v0.3.0.** All checklist items C1–C5 implemented and
+> verified (before/after pairs under `docs/screenshots/c1_*`–`c5_*`). Two late
+> additions beyond this doc: the two players now share one identical camera
+> orientation (commit c81ba32), and W/ArrowUp pan was fixed to be screen-up for
+> both viewers (commit b422c39). The sim-side vision/lane-spread bumps were
+> explicitly user-approved exceptions to the presentation-only rule.
+
 Repo: `github.com/arku31/castle-lanes` (Rust / Bevy 0.18.1). ALL work is client
 presentation: camera, scene, VFX. **Never touch** `src/sim.rs`, `src/net.rs`,
 `src/bin/server.rs`, protocol, balance — determinism is sacred. `--renderer2d`

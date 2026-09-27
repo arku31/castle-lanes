@@ -2,14 +2,20 @@
 
 Castle Lanes is a native desktop Rust/Bevy game inspired by the builder-autobattler shape of classic custom RTS maps (original names and art). Authoritative deterministic UDP server, procedural low-poly 3D world with one shared sun, Blender-authored glTF armies, and a Warcraft-3-style build/placement loop.
 
-**Current release: v0.2.0** — the "WC3-style low-poly 3D" overhaul (plan: [docs/plan-0.2.md](docs/plan-0.2.md)). Highlights:
+**Current release: v0.3.0** — the "WC3 feel" pass (plan: [docs/goal-0.3-wc3-feel.md](docs/goal-0.3-wc3-feel.md)) on top of the v0.2 low-poly 3D overhaul ([docs/plan-0.2.md](docs/plan-0.2.md)). Highlights:
 
-- Heightfield terrain: castle highlands, lane roads, a water channel with stone bridges, and a wilderness ring with trees and rocks.
-- One shadow-mapped sun + distance haze; every unit and building is a Blender-authored low-poly glTF model (models are code under `tools/blender/`), with the v0.1 2D renderer kept behind `--renderer2d`.
-- WC3-style placement: grid appears only while building, ghost preview with valid/invalid tint, animated build circle, scaffold state on fresh buildings.
-- Same deterministic sim and protocol as v0.1 — replays, matchmaking, and team play unchanged.
+- Long-lens WC3 camera: 22° FOV, side-on framing — the map reads left-to-right and both players share one identical orientation (your base sits on your side of the screen; arrows pan screen-up for everyone).
+- Units and buildings rescaled to WC3 proportions (units ≈ 0.6–0.7 lane spacing).
+- Procedural animation: walk bob/lean, attack windup→strike, spawn pop-in, hit flash, death fall-and-sink — no more sliding statues.
+- Combat juice: death poofs, shot trails, build dust, bounty bursts, screen shake on castle hits.
+- Stage framing: prop rows border the default view; the water channel reads as a moat.
+- Larger vision radii and lane spread (server-sim tuning), continuous fog-of-war veil, and connection-error banners in the client.
 
-![Vanguard army and buildings on the 3D battlefield](docs/screenshots/battle_3d_castle.png)
+| Grove base (Left player view) | Ember base (Right player view) — same world orientation |
+| --- | --- |
+| ![Grove castle and buildings on the 3D battlefield](docs/screenshots/v03_battle_grove.png) | ![Ember castle on the opposite shore](docs/screenshots/v03_battle_ember.png) |
+
+v0.2 highlights still current: heightfield terrain (castle highlands, lane roads, water channel with bridges, wilderness ring), one shadow-mapped sun, every unit and building a Blender-authored low-poly glTF model (models are code under `tools/blender/`), WC3-style placement (grid only while building, ghost preview, build circle, scaffold state), v0.1 2D renderer kept behind `--renderer2d`, and the same deterministic sim and protocol as v0.1.
 
 More views — the HUD, lobby, and overlays all fit a 1600×900 window without scrolling:
 
@@ -29,13 +35,9 @@ More views — the HUD, lobby, and overlays all fit a 1600×900 window without s
 | --- | --- |
 | ![Help overlay with rules and controls](docs/screenshots/help_3d.png) | ![Settings overlay with volume and resolution](docs/screenshots/settings_3d.png) |
 
-| Help overlay (H) | Settings overlay (O) |
-| --- | --- |
-| ![Help overlay with rules and controls](docs/screenshots/help.png) | ![Settings overlay with volume and resolution](docs/screenshots/settings.png) |
-
 ## Download
 
-Ready-to-play builds for **Windows, macOS and Linux** (3D client + dedicated server, with launch scripts) are on the [Releases page](../../releases). The release clients come preconfigured to reach the hosted test server — just extract and run the launcher for your platform, then press `Enter` to join. To point a client somewhere else, pass `--server host:port`.
+Ready-to-play builds for **Windows, macOS and Linux** (3D client + dedicated server, with launch scripts) are attached to the [latest release](../../releases/latest) and refreshed by CI on every push to `master` (as workflow artifacts). The release clients come preconfigured to reach the hosted test server — just extract and run the launcher for your platform, then press `Enter` to join. To point a client somewhere else, pass `--server host:port`.
 
 ## Run
 
@@ -91,6 +93,7 @@ cargo run --bin castle_lanes_bot -- --name Bryn --server 127.0.0.1:4000 --race e
 - `--race vanguard|grove|ember`: client/bot flag for demo/test race selection.
 - `--auto-ready`: client flag for demo/test runs that readies after joining.
 - `--auto-build-demo`: client flag for demo/test runs that places your first race building after match start.
+- `--join-open`: demo automation joins an existing open game instead of creating its own (two-client test matches; creates one as fallback).
 - `--show-help` / `--show-settings`: client flags that open with the corresponding overlay visible (capture/demo aid).
 
 Players must choose a race before readying. The server rejects ready commands until a race is selected.
@@ -111,14 +114,21 @@ The dedicated server loads this file at startup. Clients receive the active bala
 
 - Native desktop is the current target. Browser support is possible later, but the game work is focused on the native Bevy client and dedicated server first.
 - The game should feel like a classic RTS custom-map autobattler, but with original races, units, buildings, art, and naming.
-- We chose a 2.5D direction instead of jumping to full 3D. The simulation now moves toward real spatial RTS behavior while the renderer keeps the readable isometric-ish 2D style.
+- Since v0.2 the presentation is full low-poly 3D (heightfield terrain, glTF armies, shadow-mapped sun), tuned toward a Warcraft-3-like look: long-lens side-on camera, WC3 unit proportions, and readable stage framing. The v0.1 2D renderer remains available behind `--renderer2d`.
+- Both players share one camera orientation: lane Top at the top of the screen, the map running left-to-right, your own base on your side.
 - The server stays authoritative. Clients send player intents only; health, economy, spawns, movement, collision, combat, bounties, victory, and rematch state belong to the server.
 - Lanes remain a strategic concept, but units now have real 2D simulation positions, velocity, and radius. This lets us add spacing, body blocking, better combat readability, and future pathing without rewriting the entire game into 3D.
 - Fog of war uses client-side explored memory for presentation, while current visibility still comes from the replicated server snapshot and local reveal rules.
 
 ## Art
 
-Generated original art lives in:
+The 3D presentation is built from Blender-authored glTF models (castles, 24 buildings, 21 units, doodads) under:
+
+```text
+assets/models/
+```
+
+Models are code: part library, manifests, and preview renders live in `tools/blender/`, so every asset is diffable and re-renderable. Generated original 2D art (unit/building icons for the command card, plus billboard fallbacks for `--renderer2d`) lives in:
 
 ```text
 assets/art/

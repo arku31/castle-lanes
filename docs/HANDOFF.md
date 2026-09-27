@@ -1,4 +1,72 @@
-# Handoff: Castle Lanes — 2026-09-06 (evening)
+# Handoff: Castle Lanes
+
+# Session addendum — 2026-09-27 (v0.3.0 "WC3 feel" shipped)
+
+## Where the project stands (short)
+
+v0.3.0 is tagged: the full WC3-feel presentation pass from `docs/goal-0.3-wc3-feel.md`
+(C1–C5) is implemented, verified, and screenshotted. `task verify` green (fmt +
+clippy + 49 tests). CI (`.github/workflows/test-builds.yml`) builds Windows, macOS,
+and Linux packages on every push to `master` and attaches zips/tarballs to GitHub
+releases on `v*` tags; `.github/workflows/deploy-server.yml` ships the dedicated
+server to the hosted VPS on every push. `task verify` stays the gate.
+
+## v0.3 highlights (what changed since the v0.2 addendum below)
+
+- **C1 long-lens camera**: FOV 40→22°, base dist ~800 @ pitch 54°, zoom 0.4–1.9.
+  Side-on framing: the map runs left-to-right on screen; towers don't lean.
+- **C2 scale**: units ×2.2, buildings/castles up; units read ≈ 0.6–0.7 lane spacing;
+  health bars/badges rescaled with them.
+- **C3 animation states** (procedural, `animate_units_3d`): walk bob + lean,
+  attack windup→strike keyed on `attack_timer`, spawn pop-in, hit flash on
+  health drop, corpse fall+sink. Billboard fallback still camera-faces.
+- **C4 combat juice**: death poofs, shot trails, build dust, bounty bursts,
+  decaying screen shake on castle hits (`ScreenShake`).
+- **C5 stage framing**: props concentrated in the visible band + frame-bordering
+  rows; calmed, saturated terrain palette; continuous conforming fog veil
+  (per-corner smoothed alpha, throttled rebuilds) replaced the tile lattice.
+- **Camera orientation is shared**: both players watch from the same side of the
+  field (lane Top at screen top for everyone). `CameraRig.look_sign` was removed;
+  pan is world-axis aligned (W/up = screen-up for both viewers). The Right
+  player's base sits on the screen right and their units march right-to-left.
+- **Vision/lane-spread tuning (sim-side, user-approved)**: `VISION_UNIT_RADIUS`
+  8→15, `VISION_BUILDING_RADIUS` 7→13, `VISION_CASTLE_RADIUS` 18→26,
+  `LANE_SPREAD_LIMIT` 6→11 (src/sim.rs); client reveal radii 340/300/620.
+- **Client hardening**: join/race/ready/rematch resends until confirmed, stuck-in-
+  lobby rejoin failsafe, red connection-error banner ("Unable to connect…"),
+  `--join-open` (demo automation joins an existing open game — two-client test
+  matches now work; falls back to creating after 12 s).
+- **All-faction model registration fix**: Grove/Ember castles/buildings/units were
+  falling back to icon billboards because only the Vanguard set was registered.
+
+## Ops map (how builds/hosting work)
+
+- `test-builds.yml`: on push → win/mac/linux release builds (artifact
+  `castle-lanes-<os>`); on tag `v*` → publish-release job zips them and creates
+  the GitHub release. `GAME_SERVER_ADDR` secret is baked into CI clients as
+  `CL_DEFAULT_SERVER_ADDR` (falls back to the hardcoded
+  `DEFAULT_SERVER_ADDR` in src/net.rs = `85.215.62.111:4000`).
+- `deploy-server.yml`: on push → builds the server, scp's it to the VPS
+  (`VPS_HOST`/`VPS_SSH_KEY` secrets), restarts `castle-lanes.service`. The VPS
+  hosts matches only; it never joins as a player. Clients connect to
+  `85.215.62.111:4000`.
+- Local demo trio on the Deck: server → client (`--auto-ready
+  --auto-build-demo --demo-shots`) → bot, or two clients with `--join-open` on
+  the second. Screenshots: in-engine only (`--demo-shots`/F12 into `shots/`).
+
+## Next steps (unchanged priorities)
+
+1. **Balance iteration 3** — Grove still hard-counters Vanguard in full-cycle bot
+   matches (see docs/balance-report-0.2.md); unit-level gold efficiency is fine
+   (43.8–56.2% cost-matched matrix via `examples/clash_matrix.rs`).
+2. **Commander powers** (user: KEEP) — per-player strategic abilities.
+3. Team-play polish (4-lane minimap/camera), spectator UI.
+4. The macOS-era notes below are historical: the winit self-exit block applies to
+   the old macOS dev box, not the Steam Deck.
+
+---
+
+# Historical: 2026-09-06 (evening, macOS dev box)
 
 ## Where the project stands (short)
 
