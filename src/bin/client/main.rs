@@ -365,6 +365,7 @@ fn run_replay(path: std::path::PathBuf) {
         .init_resource::<World3dAssets>()
         .init_resource::<CameraRig>()
         .init_resource::<BuildFx>()
+        .init_resource::<ScreenShake>()
         .init_resource::<SnapshotState>()
         .init_resource::<BuildSelection>()
         .init_resource::<BuildHover>()
@@ -663,6 +664,13 @@ struct UnitVisual {
     /// True when the sprite slot holds a Blender mesh (glTF scene) instead of
     /// a camera-facing quad; drives facing + bob behavior.
     is_model: bool,
+    /// Model yaw (radians) and its X-sign for forward lunges.
+    facing: f32,
+    facing_sign: f32,
+    /// Elapsed time at spawn: drives the C3 pop-in scale.
+    spawned_at: f32,
+    /// Remaining hit-flash pulse time (C3: feedback on damage).
+    hit_flash: f32,
 }
 
 #[derive(Resource, Default)]
@@ -1108,6 +1116,7 @@ fn main() {
         .init_resource::<World3dAssets>()
         .init_resource::<CameraRig>()
         .init_resource::<BuildFx>()
+        .init_resource::<ScreenShake>()
         .insert_resource(new_input_diag())
         .insert_resource(DemoShots {
             enabled: options.demo_shots,

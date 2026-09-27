@@ -1248,6 +1248,10 @@ pub(crate) fn spawn_unit_visual(
         side,
         last_pos: world,
         is_model: false,
+        facing: 0.0,
+        facing_sign: 1.0,
+        spawned_at: 0.0,
+        hit_flash: 0.0,
     }
 }
 

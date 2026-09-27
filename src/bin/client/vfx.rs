@@ -19,6 +19,7 @@ pub(crate) fn detect_combat_vfx(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut world_assets: ResMut<World3dAssets>,
+    mut shake: ResMut<ScreenShake>,
 ) {
     let mut res = Res3d {
         meshes: &mut meshes,
@@ -176,6 +177,7 @@ pub(crate) fn detect_combat_vfx(
                     true,
                 );
                 sfx.push(Sfx::CastleAlarm);
+                shake.magnitude = 14.0;
             }
         }
 
@@ -229,6 +231,7 @@ pub(crate) fn update_combat_vfx(
     mut commands: Commands,
     time: Res<Time>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    corpses_query: Query<(), With<CorpseFall>>,
     mut query: Query<
         (
             Entity,
@@ -266,7 +269,7 @@ pub(crate) fn update_combat_vfx(
 
     if is_3d() {
         update_combat_text_3d(&mut commands, &time, &windows, &cam3d, &mut texts);
-        update_combat_vfx_3d(commands, time, materials, vfx3d);
+        update_combat_vfx_3d(commands, time, &corpses_query, materials, vfx3d);
         return;
     }
     for (entity, mut vfx, mut transform, font, text_color, sprite) in &mut query {

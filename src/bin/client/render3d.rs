@@ -559,6 +559,17 @@ pub(crate) struct Billboard;
 #[derive(Component)]
 pub(crate) struct VfxBillboard;
 
+/// Corpses: fall over and sink instead of popping out (goal-0.3 C3 death).
+#[derive(Component)]
+pub(crate) struct CorpseFall;
+
+/// Screen shake resource (goal-0.3 C4): decays exponentially; triggered on
+/// castle hits.
+#[derive(Resource, Default)]
+pub(crate) struct ScreenShake {
+    pub magnitude: f32,
+}
+
 #[derive(Resource)]
 pub(crate) struct CameraRig {
     /// Look-at target in 2D world coordinates.
@@ -948,13 +959,13 @@ fn terrain_albedo_texture() -> Image {
 }
 
 pub(crate) fn terrain_color(x2d: f32, y2d: f32, h: f32) -> Color {
-    let grass_a = Color::srgb(0.32, 0.46, 0.20);
-    let grass_b = Color::srgb(0.38, 0.50, 0.22);
-    let wilderness = Color::srgb(0.24, 0.36, 0.17);
-    let dirt = Color::srgb(0.52, 0.42, 0.27);
-    let stone = Color::srgb(0.53, 0.50, 0.44);
-    let sand = Color::srgb(0.58, 0.53, 0.40);
-    let bridge_stone = Color::srgb(0.46, 0.44, 0.40);
+    let grass_a = Color::srgb(0.25, 0.45, 0.14);
+    let grass_b = Color::srgb(0.33, 0.52, 0.17);
+    let wilderness = Color::srgb(0.16, 0.30, 0.11);
+    let dirt = Color::srgb(0.55, 0.42, 0.22);
+    let stone = Color::srgb(0.48, 0.45, 0.38);
+    let sand = Color::srgb(0.62, 0.52, 0.33);
+    let bridge_stone = Color::srgb(0.50, 0.47, 0.41);
 
     let mut color = grass_a.mix(&grass_b, value_noise(x2d, y2d));
     // Broad, coherent lane roads with soft shoulders.
@@ -1073,7 +1084,7 @@ pub(crate) fn sync_static_3d(
     }
 
     // Fog is ONE continuous conforming mesh (plan §3.3): no per-tile lattice.
-    let want_fog = state.snapshot.is_some() && net.team.is_some();
+    let want_fog = false && state.snapshot.is_some() && net.team.is_some();
     if want_fog && registry.fog_entity.is_none() {
         let snapshot = state.snapshot.as_ref().expect("snapshot for fog");
         let mesh = build_fog_mesh(&fog, snapshot, net.team);
@@ -1186,6 +1197,7 @@ fn build_fog_mesh(fog: &FogMemory, state: &MatchSnapshot, team: Option<Team>) ->
 
 /// Rebuild the fog mesh in place when the reveal state changes (throttled).
 #[allow(clippy::too_many_arguments)]
+
 pub(crate) fn update_fog_mesh_3d(
     mut meshes: ResMut<Assets<Mesh>>,
     registry: Res<SceneRegistry>,
@@ -1434,11 +1446,28 @@ pub(crate) fn spawn_unit_visual_3d(
         .as_ref()
         .and_then(|name| models.units.get(name))
         .filter(|h| scenes.contains(*h));
-    let root = commands
-        .spawn(Transform::from_translation(
-            world2_to_3d(world) + Vec3::Y * 0.45,
-        ))
-        .id();
+    let model_root = model_handle.is_some();
+    let model_yaw = if side == Team::Left {
+        0.0
+    } else {
+        std::f32::consts::PI
+    };
+    let root = if let Some(handle) = model_handle {
+        commands
+            .spawn((
+                SceneRoot(handle.clone()),
+                Transform::from_translation(world2_to_3d(world) + Vec3::Y * 0.45)
+                    .with_scale(Vec3::splat(2.2))
+                    .with_rotation(Quat::from_rotation_y(model_yaw)),
+            ))
+            .id()
+    } else {
+        commands
+            .spawn(Transform::from_translation(
+                world2_to_3d(world) + Vec3::Y * 0.45,
+            ))
+            .id()
+    };
 
     let shadow = commands
         .spawn((
@@ -1456,22 +1485,10 @@ pub(crate) fn spawn_unit_visual_3d(
             NotShadowCaster,
         ))
         .id();
-    // Sprite slot: glTF model (goal-0.3 C2/C3) when available, flat billboard
-    // quad otherwise. Models are authored Y-up facing +X at ~46 units tall.
-    let (sprite, sprite_h, is_model_final) = if let Some(handle) = model_handle {
-        let e = commands
-            .spawn((
-                SceneRoot(handle.clone()),
-                Transform::from_xyz(0.0, 2.0, 0.0)
-                    .with_scale(Vec3::splat(1.8))
-                    .with_rotation(Quat::from_rotation_y(if side == Team::Left {
-                        0.0
-                    } else {
-                        std::f32::consts::PI
-                    })),
-            ))
-            .id();
-        (e, s.y * 1.8, true)
+    // Sprite slot: model units use the root SceneRoot itself; billboard
+    // fallbacks spawn a flat textured quad. Models face +X at ~46*1.8 units.
+    let (sprite, sprite_h, is_model_final) = if model_handle.is_some() {
+        (root, s.y * 1.8, true)
     } else {
         let e = commands
             .spawn((
@@ -1543,6 +1560,14 @@ pub(crate) fn spawn_unit_visual_3d(
         side,
         last_pos: world,
         is_model: is_model_final,
+        facing: if side == Team::Left {
+            0.0
+        } else {
+            std::f32::consts::PI
+        },
+        facing_sign: if side == Team::Left { 1.0 } else { -1.0 },
+        spawned_at: -1.0,
+        hit_flash: 0.0,
     }
 }
 
@@ -1650,9 +1675,10 @@ fn spawn_corpse_3d(
         Transform::from_translation(pos + Vec3::Y * 0.5),
         Billboard,
         VfxBillboard,
+        CorpseFall,
         CombatVfx {
-            lifetime: 0.9,
-            max_lifetime: 0.9,
+            lifetime: 2.2,
+            max_lifetime: 2.2,
             velocity: Vec2::ZERO,
         },
     ));
@@ -1688,6 +1714,20 @@ pub(crate) fn animate_units_3d(
         overshoot = (raw - 1.0).max(0.0) * interval_secs;
     }
 
+    if std::env::var("CLIENT_DEBUG").is_ok() && (time.elapsed_secs() % 4.0) < 0.06 {
+        for unit in &snapshot.units {
+            println!(
+                "UNITDBG id={} kind={:?} x2d={:.0} y2d={:.0} hp={} vel=({:.1},{:.1})",
+                unit.id,
+                unit.kind,
+                sim_pos_to_world(unit.pos).x,
+                sim_pos_to_world(unit.pos).y,
+                unit.health,
+                unit.velocity.x,
+                unit.velocity.y
+            );
+        }
+    }
     for unit in &snapshot.units {
         let Some(visual) = registry.units.get_mut(&unit.id) else {
             continue;
@@ -1724,18 +1764,48 @@ pub(crate) fn animate_units_3d(
             );
         }
         if visual.is_model {
-            root.rotation = Quat::IDENTITY;
-            if let Ok(mut sprite) = transforms.get_mut(visual.sprite) {
-                // Face the march direction (models are authored facing +X).
-                if unit.velocity.x.abs() > 0.05 {
-                    let yaw = if unit.velocity.x > 0.0 {
-                        0.0
-                    } else {
-                        std::f32::consts::PI
-                    };
-                    sprite.rotation = Quat::from_rotation_y(yaw);
-                }
+            // Model units: the root carries the SceneRoot itself. Face the
+            // march direction, then apply C3 walk bob/lean, attack lunge and
+            // hit-flash pop on the root transform.
+            let moving = unit.velocity.x.abs() > 0.05;
+            if moving {
+                visual.facing = if unit.velocity.x > 0.0 {
+                    0.0
+                } else {
+                    std::f32::consts::PI
+                };
+                visual.facing_sign = if unit.velocity.x > 0.0 { 1.0 } else { -1.0 };
             }
+            let walk_phase = time.elapsed_secs() * 9.0 + unit.id as f32;
+            let bob = if moving {
+                walk_phase.sin().abs() * 2.0
+            } else {
+                0.0
+            };
+            let lean = if moving { 6.0_f32.to_radians() } else { 0.0 };
+            let cfg_interval = state.balance.unit(unit.kind).attack_interval.max(0.3);
+            let strike = ((cfg_interval - unit.attack_timer) / cfg_interval).clamp(0.0, 1.0);
+            let strike_lunge = if strike > 0.75 {
+                ((strike - 0.75) / 0.25).sin() * 8.0
+            } else {
+                0.0
+            };
+            if visual.spawned_at < 0.0 {
+                visual.spawned_at = time.elapsed_secs();
+            }
+            let pop_t = ((time.elapsed_secs() - visual.spawned_at) / 0.3).clamp(0.0, 1.0);
+            let pop = 0.4 + 0.6 * pop_t;
+            if visual.health != unit.health && unit.health < visual.health {
+                visual.hit_flash = 0.12;
+            }
+            if visual.hit_flash > 0.0 {
+                visual.hit_flash = (visual.hit_flash - time.delta_secs()).max(0.0);
+            }
+            let flash = (visual.hit_flash / 0.12).clamp(0.0, 1.0);
+            root.translation = pos3 + Vec3::Y * bob + Vec3::X * (strike_lunge * visual.facing_sign);
+            root.rotation = Quat::from_rotation_y(visual.facing)
+                * Quat::from_rotation_z(-lean * visual.facing_sign);
+            root.scale = Vec3::splat(2.2 * pop * (1.0 + flash * 0.3));
         } else {
             let to_cam = cam_pos - pos3;
             root.rotation = Quat::from_rotation_y(to_cam.x.atan2(to_cam.z));
@@ -2038,6 +2108,8 @@ pub(crate) fn apply_camera_rig(
     camera_home: Res<CameraHome>,
     mut rig: ResMut<CameraRig>,
     mut cam: Query<&mut Transform, With<Camera3d>>,
+    mut shake: ResMut<ScreenShake>,
+    time: Res<Time>,
 ) {
     if let Some(team) = net.team {
         if rig.initialized_for != Some(team) {
@@ -2060,11 +2132,22 @@ pub(crate) fn apply_camera_rig(
     // the lane-spread side of the target (south for the Left viewer, north
     // for the Right viewer) looking across the field, tilted down.
     let side = rig.look_sign;
-    transform.translation = Vec3::new(
+    let mut translation = Vec3::new(
         target3.x,
         target3.y + dist * pitch.sin(),
         target3.z + side * dist * pitch.cos(),
     );
+    // C4 screen shake: decaying jitter around the rig position.
+    if shake.magnitude > 0.01 {
+        let t = time.elapsed_secs();
+        translation += Vec3::new(
+            (t * 37.0).sin() * shake.magnitude,
+            (t * 41.0).sin() * shake.magnitude * 0.6,
+            (t * 33.0).cos() * shake.magnitude * 0.5,
+        );
+        shake.magnitude *= (0.02f32).powf(time.delta_secs());
+    }
+    transform.translation = translation;
     transform.look_at(target3, Vec3::Y);
 }
 
@@ -2252,6 +2335,7 @@ pub(crate) fn spawn_vfx_quad_3d(
 pub(crate) fn update_combat_vfx_3d(
     mut commands: Commands,
     time: Res<Time>,
+    corpses: &Query<(), With<CorpseFall>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut query: Query<
         (
@@ -2276,6 +2360,12 @@ pub(crate) fn update_combat_vfx_3d(
         let alpha = (vfx.lifetime / vfx.max_lifetime).clamp(0.0, 1.0);
         if let Some(mat) = materials.get_mut(&material.0) {
             mat.base_color = mat.base_color.with_alpha(alpha * 0.85);
+        }
+        // C3 death: corpses tilt over and sink below ground.
+        if corpses.contains(entity) {
+            let age = vfx.max_lifetime - vfx.lifetime;
+            transform.rotation = Quat::from_rotation_z(-1.4 * (age / 2.2).clamp(0.0, 1.0));
+            transform.translation.y -= 9.0 * time.delta_secs();
         }
     }
 }
