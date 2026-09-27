@@ -180,6 +180,35 @@ pub(crate) fn demo_automation(
     time: Res<Time>,
 ) {
     if net.connected && net.player_id.is_none() && (net.auto_ready || net.auto_build_demo) {
+        // --join-open: join an existing open game (two-client demos) instead
+        // of creating our own; create as a fallback once the grace expires.
+        if net.join_open {
+            let open_game = state
+                .games
+                .iter()
+                .filter(|game| {
+                    (game.phase == MatchPhase::Lobby || game.phase == MatchPhase::GameOver)
+                        && game.players < game.max_players
+                        && !game.name.starts_with(&net.player_name)
+                })
+                .max_by_key(|game| game.players);
+            if let Some(game) = open_game {
+                if net.last_join.elapsed() >= Duration::from_secs(2) {
+                    send_client(
+                        &net,
+                        &ClientPacket::JoinGame {
+                            game_id: game.id,
+                            spectator: false,
+                        },
+                    );
+                    net.last_join = Instant::now();
+                }
+                return;
+            }
+            if net.join_open_since.elapsed() < Duration::from_secs(12) {
+                return;
+            }
+        }
         if !net.sent_auto_game {
             send_client(
                 &net,

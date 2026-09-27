@@ -150,12 +150,14 @@ struct ClientNet {
     player_name: String,
     auto_ready: bool,
     auto_build_demo: bool,
+    join_open: bool,
     auto_race: RaceKind,
     sent_auto_game: bool,
     sent_auto_race: bool,
     sent_auto_ready: bool,
     sent_auto_build: bool,
     last_join: Instant,
+    join_open_since: Instant,
     last_keepalive: Instant,
     status: String,
     next_seq: u32,
@@ -299,12 +301,14 @@ fn run_replay(path: std::path::PathBuf) {
         player_name: String::new(),
         auto_ready: false,
         auto_build_demo: false,
+        join_open: false,
         auto_race: RaceKind::Vanguard,
         sent_auto_game: false,
         sent_auto_race: false,
         sent_auto_ready: false,
         sent_auto_build: false,
         last_join: Instant::now(),
+        join_open_since: Instant::now(),
         last_keepalive: Instant::now(),
         status: String::new(),
         next_seq: 0,
@@ -1065,12 +1069,14 @@ fn main() {
             player_name: options.player_name,
             auto_ready: options.auto_ready,
             auto_build_demo: options.auto_build_demo,
+            join_open: options.join_open,
             auto_race: options.auto_race,
             sent_auto_game: false,
             sent_auto_race: false,
             sent_auto_ready: false,
             sent_auto_build: false,
             last_join: Instant::now() - Duration::from_secs(3),
+            join_open_since: Instant::now(),
             last_keepalive: Instant::now(),
             status: "Press Enter to connect to the lobby server.".to_string(),
             next_seq: 1,
@@ -1183,6 +1189,9 @@ struct ClientOptions {
     player_name: String,
     auto_ready: bool,
     auto_build_demo: bool,
+    /// Demo automation joins an existing open game instead of creating one
+    /// (two-client demos; falls back to creating after a grace period).
+    join_open: bool,
     auto_race: RaceKind,
     /// Start the camera at this fraction of the battlefield (0 = left home,
     /// 1 = right home) instead of the own base; capture/spectate aid.
@@ -1201,6 +1210,7 @@ fn parse_args() -> ClientOptions {
     let mut name = format!("Player{}", std::process::id() % 1000);
     let mut auto_ready = false;
     let mut auto_build_demo = false;
+    let mut join_open = false;
     let mut auto_race = RaceKind::Vanguard;
     let mut camera_x = None;
     let mut replay = None;
@@ -1225,6 +1235,9 @@ fn parse_args() -> ClientOptions {
             }
             "--auto-build-demo" => {
                 auto_build_demo = true;
+            }
+            "--join-open" => {
+                join_open = true;
             }
             "--race" if idx + 1 < args.len() => {
                 auto_race = parse_race(&args[idx + 1]);
@@ -1265,6 +1278,7 @@ fn parse_args() -> ClientOptions {
         player_name: name,
         auto_ready,
         auto_build_demo,
+        join_open,
         auto_race,
         camera_x,
         replay,

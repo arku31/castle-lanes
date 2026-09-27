@@ -597,8 +597,6 @@ pub(crate) struct CameraRig {
     pub target: Vec2,
     /// Zoom factor; 1.0 matches the v0.1 default view height.
     pub zoom: f32,
-    /// +1 when the viewer looks toward +X (left side), -1 otherwise.
-    pub look_sign: f32,
     pub initialized_for: Option<Team>,
 }
 
@@ -607,7 +605,6 @@ impl Default for CameraRig {
         Self {
             target: Vec2::ZERO,
             zoom: 1.0,
-            look_sign: 1.0,
             initialized_for: None,
         }
     }
@@ -2131,14 +2128,12 @@ pub(crate) fn camera_rig_input(
         }
     }
     if forward != 0.0 || strafe != 0.0 {
-        // Screen-up pans across the lanes (map "north"), screen-right pans
-        // toward the enemy. Both follow the viewer's mirrored frame: for the
-        // Left viewer (camera south, looking north) screen-up is +y, for the
-        // Right viewer (camera north, looking south) it is -y — exactly the
-        // look_sign factor.
+        // Shared orientation for every player: screen-up is map north (+y,
+        // lane Top at the top) and screen-right is +x. Panning is therefore
+        // world-axis aligned and identical for both clients.
         let speed = 620.0 * rig.zoom * time.delta_secs();
-        rig.target.x += strafe * rig.look_sign * speed;
-        rig.target.y += forward * rig.look_sign * speed;
+        rig.target.x += strafe * speed;
+        rig.target.y += forward * speed;
         rig.target.x = rig.target.x.clamp(-1520.0, 1520.0);
         rig.target.y = rig.target.y.clamp(-330.0, 330.0);
     }
@@ -2159,7 +2154,6 @@ pub(crate) fn apply_camera_rig(
                 .home_override
                 .map(|fraction| Vec2::new((fraction - 0.5) * (WORLD_W - 120.0), 0.0))
                 .unwrap_or_else(|| CameraRig::home_target(team));
-            rig.look_sign = if team == Team::Left { 1.0 } else { -1.0 };
             rig.initialized_for = Some(team);
         }
     }
@@ -2169,11 +2163,11 @@ pub(crate) fn apply_camera_rig(
     let pitch = CAM_PITCH_DEG.to_radians();
     let dist = rig.dist();
     let target3 = world2_to_3d(rig.target);
-    // WC3 presentation: the map length runs LEFT-TO-RIGHT on screen and
-    // units march home->enemy left-to-right. The camera therefore sits at
-    // the lane-spread side of the target (south for the Left viewer, north
-    // for the Right viewer) looking across the field, tilted down.
-    let side = rig.look_sign;
+    // WC3 presentation: every player watches from the same side — the map
+    // length runs LEFT-TO-RIGHT on screen with lane Top at the top. The
+    // Right player's own base therefore sits on the screen right and their
+    // units march right-to-left toward the enemy, mirrored for nobody.
+    let side = 1.0;
     let mut translation = Vec3::new(
         target3.x,
         target3.y + dist * pitch.sin(),
